@@ -1,0 +1,47 @@
+\documentclass[journal, onecolumn]{IEEEtran}
+
+\usepackage{amsmath, amsfonts, amssymb}
+\usepackage{hyperref}
+
+\begin{document}
+
+\title{Proposed Evaluation Metrics for End-to-End\\ Modi to Devanagari Transliteration}
+\author{}
+\maketitle
+
+\begin{abstract}
+This document outlines the evaluation criteria for the Vision-Language Model (VLM) framework designed to transliterate archival Modi script into modern Devanagari (Marathi). Because historical Modi manuscripts frequently utilized continuous \textit{Shirorekha} (top-line connectivity) lacking explicit word boundaries, our architecture processes the translation in two distinct stages: (1) Vision-based continuous character transliteration, and (2) Dictionary-based context-aware word segmentation. Consequently, the evaluation methodology must be bifurcated to independently validate the vision capabilities and the linguistic segmentation logic.
+\end{abstract}
+
+\section{Stage 1: Raw Transliteration Evaluation (Unsegmented Output)}
+At the primary stage, the VLM ingests the document image and outputs a continuous, unsegmented string of Devanagari characters. Standard word-level metrics heavily penalize this output due to the lack of algorithmic spacing. Thus, evaluation here focuses strictly on the network's graphemic recognition capacity.
+
+\subsection{Character Error Rate (CER)}
+\textbf{Definition:} Computes the Levenshtein (edit) distance, measuring the minimum number of character-level insertions, deletions, and substitutions required to perfectly match the predicted continuous string with the ground truth string, normalized by the length of the ground truth.
+\\[5pt]
+\textbf{Justification:} CER is universally recognized as the ``gold standard'' metric in Handwritten Text Recognition (HTR) for historical documents. Given the severe morphological degradation and cursiveness of the Modi script, models are likely to predict partial character matches (e.g., getting the base consonant correct but misclassifying a vowel modifier). CER mathematically rewards partial correctness rather than defaulting to a binary pass/fail, enabling robust tracking of the vision encoder's stroke-recognition accuracy over time.
+
+\subsection{Character-level F-Score (chrF)}
+\textbf{Definition:} An adaptation of the traditional BLEU score that measures the strict $n$-gram overlap of \textit{characters} (instead of words) between the hypothesis and the reference strings.
+\\[5pt]
+\textbf{Justification:} Since the stage-1 output is an unsegmented character sequence, word-based NLP metrics cannot function. Calculating $n$-gram overlaps at the character level acts as an excellent complementary metric to CER. It provides deeper insight into whether the model is successfully identifying multi-character syllables and complex Marathi conjuncts (\textit{Jodaksharas}) in context, which are prevalent in the script.
+
+\section{Stage 2: Post-Segmentation Evaluation (Segmented Output)}
+Following the output of the continuous Devanagari string, the post-processing linguistic engine (dictionary/statistical segmentation algorithm) inserts boundaries to form readable Marathi words. The following metrics evaluate the end-to-end viability and phonetic readability of the segmented sentence.
+
+\subsection{Segmentation Boundary Precision, Recall, and F1-Score}
+\textbf{Definition:} Evaluates every character gap in the continuous string as a binary classification problem (Space vs. No Space). Precision measures how many generated spaces were correct; Recall measures how many of the true spaces the algorithm successfully found.
+\\[5pt]
+\textbf{Justification:} Using a lexicon pipeline for historical Marathi is naturally complex due to archaic vocabulary and agglutination. Boundary F1-Score allows us to mathematically isolate and benchmark the dictionary segmenter's performance totally independent of the Vision Encoder. If the final document reads poorly, this metric pinpoints whether the vision model misread the strokes, or the dictionary simply split the words incorrectly.
+
+\subsection{Word Error Rate (WER)}
+\textbf{Definition:} The word-level equivalent of CER. It calculates the necessary insertions, deletions, and substitutions of fully segmented words to align the predicted sentence with the ground truth structure.
+\\[5pt]
+\textbf{Justification:} WER becomes the critical diagnostic tool \textit{after} word boundaries are enforced. Due to the high ambiguity of historical dialects, the segmenter might occasionally split a single compound word into two, creating length mismatches between the predicted sentence and the ground truth. WER inherently mathematically resolves these mismatches via edit distance, calculating a highly accurate picture of objective word-level accuracy.
+
+\subsection{BLEU-4 (Bilingual Evaluation Understudy)}
+\textbf{Definition:} An empirical metric that evaluates semantic translation quality by measuring the overlap of 1-gram to 4-gram word sequences between the generated text and the reference text.
+\\[5pt]
+\textbf{Justification:} Because transliterating a historical script into a modern counterpart is fundamentally a Sequence-to-Sequence generation task natively mimicking Machine Translation, academic peer-review heavily expects BLEU scores. Reporting BLEU-4 on the final segmented sequence mathematically proves to reviewers that the end-to-end framework produces semantically coherent, structurally fluid modern Marathi sentences rather than just disparate, scrambled words.
+
+\end{document}

@@ -1,0 +1,169 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, geometry, graphicx, hyperref, xcolor, booktabs, mathptmx}
+\usepackage[T1]{fontenc}
+\usepackage{caption}
+\geometry{margin=1in}
+
+\title{\textbf{LineTR: A Comprehensive Architecture Guide for Implementation}}
+\author{Implementation Reference Document}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document provides a detailed, granular breakdown of the \textbf{LineTR} architecture, designed for text line segmentation of challenging historical and palm leaf manuscripts. The goal of this guide is to equip developers and researchers with the necessary architectural details, mathematical formulations, and step-by-step pipeline concepts to build and train the LineTR model from scratch.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction and Core Philosophy}
+LineTR aims to solve the problem of text line segmentation across diverse datasets without requiring dataset-specific hyperparameters or downsampling entire high-resolution manuscripts, which destroys critical text context. 
+
+Unlike traditional approaches that predict pixel blobs (segmentation) or use fixed-size image patches, LineTR treats text-line detection as a geometric curve prediction problem and processes manuscripts via a \textbf{two-stage pipeline} utilizing \textbf{context-adaptive patches}.
+
+\section{System Overview: The Two-Stage Pipeline}
+
+The pipeline is split into two major stages:
+\begin{enumerate}
+    \item \textbf{Stage-1 (Deep Learning Patch Processing):} 
+    \begin{itemize}
+        \item Computes context-adaptive patch sizes.
+        \item Processes patches through a shared Vision Transformer (ViT) backbone.
+        \item Outputs parametric line scribbles via a DETR-style network.
+        \item Outputs a continuous Text-Energy map via a hybrid CNN-Transformer network.
+        \item Stitches patch-level outputs into global document-level maps.
+    \end{itemize}
+    \item \textbf{Stage-2 (Seam Generation):}
+    \begin{itemize}
+        \item Uses the global scribbles and global Text-Energy map to generate tight-fitting polygons around text lines using a Seam Carving algorithm.
+    \end{itemize}
+\end{enumerate}
+
+---
+
+\section{Stage-1: Context-Adaptive Patching}
+To process documents of vastly different resolutions, fixed-size patches fail by capturing either too much or too little context. 
+
+\subsection{Adaptive Patch Calculation}
+\begin{enumerate}
+    \item Sample initial candidate patches of sizes $m \in \{64, 128, 256, 384, 512\}$.
+    \item Resize these patches to the model's fixed input size $s = 256 \times 256$.
+    \item Pass through the model to predict lines and calculate the median interline gap $\delta_{patch}$.
+    \item Scale $\delta_{patch}$ back to the original document size: $\delta_{doc} = \delta_{patch} \cdot \frac{m}{s}$.
+    \item Average the $\delta_{doc}$ values across patches to get $\delta_{avg}$.
+    \item Calculate final patch size $t = \delta_{avg} \times \zeta$, where $\zeta$ is a scaling hyperparameter representing the expected number of text lines per patch.
+\end{enumerate}
+
+During training and main inference, overlapping patches of size $t \times t$ are sampled and resized to $256 \times 256 \times 3$ to feed into the model networks.
+
+---
+
+\section{Stage-1: Deep Neural Networks Architecture}
+
+\subsection{Shared Encoder}
+The input to the network is a patch of dimension $H_0 \times W_0 \times 3$ (where $H_0=256, W_0=256$).
+\begin{itemize}
+    \item \textbf{Backbone:} Vision Transformer (ViT).
+    \item \textbf{Patch Size:} $16 \times 16$ pixels.
+    \item \textbf{Architecture:} 8 Encoder layers, learnable position embeddings.
+    \item \textbf{Output:} Shared feature map $M \in \mathbb{R}^{H \times W \times C}$ where $H=16, W=16$, and embedding dimension $C=256$.
+\end{itemize}
+
+\subsection{Line-Parameter Generator (DETR-style)}
+Instead of predicting pixel boundaries, LineTR predicts strike-through scribbles as parametric lines. A line is represented by three normalized parameters: $(\mu_x, \mu_y, m)$, where $(\mu_x, \mu_y) \in [0, 1]$ is the midpoint and $m$ is the slope.
+
+\subsubsection{Architecture}
+\begin{itemize}
+    \item \textbf{Line Queries:} $N = 200$ learnable embeddings.
+    \item \textbf{Line Priors:} $N$ horizontal lines uniformly distributed. Prior $A^{(i)}$ initialized as $(\mu_x=0.5, \mu_y=i/N, m=0)$.
+    \item \textbf{Positional Queries ($Q_p^{(i)}$):} Transformed encodings of Line Priors, added to the input of attention layers.
+    \item \textbf{Transformer Decoder:} $L = 8$ layers.
+    \begin{itemize}
+        \item \textit{Self-Attention:} Applied among the Line Queries.
+        \item \textit{Cross-Attention:} Decoupled row-column-based attention between Line Queries and encoder feature map $M$ (enables faster convergence).
+    \end{itemize}
+    \item \textbf{Prediction Heads:} Output embeddings $E^{(i)}$ are passed through lightweight Feed-Forward Networks (FFN) to yield $\mu_x, \mu_y, m$ and a confidence probability $p$.
+\end{itemize}
+
+\subsubsection{Loss and Optimization (Bipartite Matching)}
+Matching ground truth lines to predictions is done via the Hungarian Algorithm. 
+Let $l$ be ground truth and $\hat{l}$ be prediction. The vertical distances between the lines at the left and right patch boundaries are $d_{left}$ and $d_{right}$.
+
+\textbf{Geometric Loss:}
+\begin{equation}
+    L_{geom}(\hat{l}, l) = d_{left}^2 + d_{right}^2
+\end{equation}
+
+\textbf{Matching Cost:}
+\begin{equation}
+    C_{match}(\hat{l}, l) = \lambda_{geom} \cdot \frac{L_{geom}(\hat{l}, l)}{\delta} - \lambda_p \cdot p
+\end{equation}
+where $\delta$ is the median vertical gap between sorted ground truth lines.
+
+\textbf{Final Optimization Loss:}
+Comprises Focal Loss ($L_{focal}$) for classification (line vs empty class $\phi$) and Geometric Loss for bounding boxes.
+\begin{align}
+    L_{opt} = & \sum_{g(i)=\phi} \lambda_1 L_{focal}(p_i, -) + \sum_{g(i)\neq\phi} \left[ \lambda_2 L_{focal}(p_i, +) + \lambda_{geom} \frac{L_{geom}(\hat{l}, l)}{\delta^2} \right]
+\end{align}
+
+\subsection{Text-Energy Map Generator}
+To aid in building polygons, a continuous map $[0,1]$ representing text likelihood is generated via a Hybrid CNN-Transformer.
+
+\subsubsection{Architecture}
+\begin{itemize}
+    \item \textbf{CNN Encoder:} 4 convolutional layers, reducing spatial dimensions by half per layer. Outputs feature map $P \in \mathbb{R}^{16 \times 16 \times 256}$.
+    \item \textbf{Transformer Decoder:} $R = 3$ layers. Self-attention is applied to ViT map $M$. Standard cross-attention processes the result with CNN feature $P$.
+    \item \textbf{CNN Decoder:} 4 layers of (convolution + upsampling) equipped with skip connections from the CNN Encoder.
+    \item \textbf{Output Layer:} Sigmoid activation yielding map $B \in [0, 1]^{256 \times 256}$.
+    \item \textbf{Loss:} Standard Focal loss ($\alpha=0.25$) against binary ground-truth energy maps.
+\end{itemize}
+
+---
+
+\section{Stage-1: Post-Processing}
+
+After generating patch-level predictions, they must be merged.
+\begin{itemize}
+    \item \textbf{Global Scribbles ($S$):} Patch scribbles are un-normalized and rendered onto the original document dimensions. An Iterative Projection-Merging Algorithm clusters lines based on distance. Each cluster forms a global document text-line scribble.
+    \item \textbf{Global Text-Energy Map ($B$):} Non-overlapping patches are evaluated through the Text-Energy Map generator and stitched together to form a full-document continuous energy map.
+\end{itemize}
+
+---
+
+\section{Stage-2: Seam Generation Framework}
+
+In the final step, the algorithm builds tight-fitting polygons. LineTR adapts the SeamFormer seam generation method with key modifications:
+\begin{itemize}
+    \item \textbf{Inputs:} Document-level Scribbles ($S$) and Global Text-Energy Map ($B$).
+    \item \textbf{No Thresholding:} Map $B$ retains its floating-point values $[0, 1]$ instead of converting to harsh binary outputs, preserving weak text signals (like diacritics).
+    \item \textbf{No Extra Maps:} LineTR drops reliance on smoothing maps, diacritic maps, or sobel maps because the generated Text-Energy Map $B$ is sufficiently high quality.
+\end{itemize}
+A seam carving path-finding algorithm calculates upper, lower, and medial seams surrounding the scribbles navigating through the energy valleys, effectively yielding text-line polygons.
+
+---
+
+\section{Training Strategy}
+
+Training LineTR is done in two distinct phases:
+\begin{enumerate}
+    \item \textbf{Phase 1 (60 + 20 epochs):} Train \textit{only} the ViT Backbone and Line-Parameter Generator. Use learning rate $5 \times 10^{-5}$ for 60 epochs, dropping to $1 \times 10^{-5}$ for the last 20.
+    \item \textbf{Phase 2 (50 epochs):} Freeze the ViT Backbone and Line-Parameter Generator. Train \textit{only} the Text-Energy Map Generator using learning rate $1 \times 10^{-4}$.
+\end{enumerate}
+The optimizer of choice is AdamW. 
+
+\section{Summary for Scratch Implementation}
+If you intend to code this from scratch:
+\begin{enumerate}
+    \item Initialize a standard ViT for your backbone.
+    \item Build a custom Transformer Decoder that implements decoupled row-column cross attention.
+    \item Write the Hungarian Matching logic using scipy's \texttt{linear\_sum\_assignment}.
+    \item Build the CNN encoder/decoder with skip connections bridging across a separate 3-layer standard Transformer Decoder.
+    \item Implement the dynamic patching loop that queries the Line Generator to figure out image density before final extraction.
+    \item Finally, write a seam carving implementation to connect the generated scribbles and energy map into polygons.
+\end{enumerate}
+
+\end{document}

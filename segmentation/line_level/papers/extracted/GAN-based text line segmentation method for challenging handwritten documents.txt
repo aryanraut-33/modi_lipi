@@ -1,0 +1,888 @@
+International Journal on Document Analysis and Recognition (IJDAR) (2025) 28:59–69
+https://doi.org/10.1007/s10032-024-00488-5
+ORIGINAL PAPER
+GAN-based text line segmentation method for challenging
+handwritten documents
+˙Ibrahim Öz¸seker1 · Ali Alper Demir2 · Ufuk Özkaya2
+Received: 11 December 2023 / Revised: 4 June 2024 / Accepted: 13 June 2024 / Published online: 21 July 2024
+© The Author(s), under exclusive licence to Springer-Verlag GmbH Germany, part of Springer Nature 2024
+Abstract
+Text line segmentation (TLS) is an essential step of the end-to-end document analysis systems. The main purpose of this
+step is to extract the individual text lines of any handwritten documents with high accuracy. Handwritten and historical
+documents mostly contain touching and overlapping characters, heavy diacritics, footnotes and side notes added over the
+years. In this work, we present a new TLS method based on generative adversarial networks (GAN). TLS problem is tackled
+as an image-to-image translation problem and the GAN model was trained to learn the spatial information between the
+individual text lines and their corresponding masks including the text lines. To evaluate the segmentation performance of
+the proposed GAN model, two challenging datasets, VML-AHTE and VML-MOC, were used. According to the qualitative
+and quantitative results, the proposed GAN model achieved the best segmentation accuracy on the VML-MOC dataset and
+showed competitive performance on the VML-AHTE dataset.
+Keywords Text line segmentation · Generative adversarial networks · Document analysis · Handwritten document
+1 Introduction
+Historical handwritten documents are one of the most impor-
+tant sources for researchers in many ﬁelds such as literature,
+history, sociology, architecture, etc. To this end, govern-
+ments, libraries, and collections have been digitizing hand-
+written documents accumulated over centuries to make them
+available to researchers. At this point, the use of document
+analysis methods becomes crucial for researchers to access
+information in the fastest and most accurate way.
+Text line segmentation (TLS) is crucial for high-level
+document analysis tasks, such as word segmentation, word
+˙Ibrahim Öz¸seker and Ali Alper Demir have contributed equally to this
+work.
+B Ufuk Özkaya
+ufukozkaya@sdu.edu.tr
+˙Ibrahim Öz¸seker
+ozsekeribrahim@gmail.com
+Ali Alper Demir
+alidemir@sdu.edu.tr
+1
+Kafein Technology Solutions, Yıldız Technical University,
+Davutpa¸sa Campus, A2, 34220 Istanbul, Turkey
+2
+Electrical-Electronics Engineering Department, Süleyman
+Demirel University, 32260 Isparta, Turkey
+spotting, and text recognition. The TLS step needs to be
+overcome powerfully, as segmentation errors will lead to
+cumulative errors in subsequent steps. However, text line seg-
+mentation is still considered a challenging problem due to the
+difﬁculties inherent in the manuscript. Segmentation accu-
+racy is degraded in cases such as skewed and curved lines,
+multi-directional lines, overlapping or touching each other
+of words or characters, different writing styles of different
+authors, etc.
+TLS is a multilingual problem and the issues to be
+addressed are often common. Moreover, due to the exis-
+tence of sidenotes and footnotes added over the years,
+the TLS problem can be more challenging in Arabic and
+Ottoman manuscripts. The challenges in these manuscripts
+are:
+• Most of the documents include skewed and curved text
+lines. So, TLS methods should adapt to angular changes
+in any individual text line.
+• The text lines in Arabic and Ottoman documents pick up
+diacritics and punctuation placed between consecutive
+text lines. So, it is important to assign these diacritics
+and punctuation accurately for further steps.
+• The consecutive text lines may include touching and/or
+overlapping characters. So, in cases of touching or over-
+123
+60
+˙I Öz¸seker et al.
+lapping, it is necessary to correctly identify and extract
+the real characters.
+• The sidenotes and footnotes were written very near to
+the main body with different orientations. This leads to a
+sharp angular transition in a small text region and makes
+text line segmentation harder.
+As stated above, TLS is a challenging problem in the
+case of documents with multi-skewed, and multi-directed
+text lines, documents with curved and ﬂuctuated text lines,
+and documents with touching and overlapping characters or
+words. To overcome these challenges, in this paper, we pro-
+pose a GAN-based TLS method. The proposed GAN model
+was trained with specially selected data sets, VML-AHTE
+and VML-MOC, to overcome these problems. To evaluate
+the performance of the proposed method and compare it with
+state-of-the-art methods same training and test data sets were
+used.TLShasbeenconsideredanimage-to-imagetranslation
+task. The GAN model has been trained for accurate extrac-
+tion of each text line by generating segmentation masks. To
+the best of our knowledge, the proposed method is the ﬁrst
+GAN model that generates masks in challenging documents.
+The main contributions of this work can be summarized as
+follows:
+• A generative TLS model is proposed for the segmentation
+of handwritten documents including various challenging
+text line behaviors.
+• The Segmentation performance of the model was evalu-
+ated on two different challenging datasets.
+• The proposed model has the ability to segment the
+manuscripts including touching/overlapping characters,
+multi-directional text lines, and text lines with punctua-
+tion marks.
+The rest of the paper is organized as follows: In Sect. 2,
+the related works are given. In Sect. 3 the proposed method
+is presented rigorously whereas Sect. 4 gives the qualitative
+and quantitative results. Finally, the results are discussed and
+a conclusion about the segmentation performance of the pro-
+posed method is given in the last section.
+2 Related works
+2.1 Learning-free methods for TLS
+Various learning-free methods have been proposed for the
+TLS problem so far. Projection-based methods [1, 2, 32],
+Hough transform-based methods [20–22], and connected
+component-based methods [16, 30] are examples of learning-
+free methods frequently used in the literature. In projection-
+based methods, it’s assumed that the text line is straight
+and segmentation is done by using the spaces between adja-
+cent text lines. While projection-based methods are often
+successful in printed documents [2], they fail especially in
+manuscript documents containing skewed and curved text
+lines. Successful text line segmentation can be done up to
+a certain level by using piece-wise projections in handwrit-
+ten documents that do not have multi-skewed text lines and
+do not contain too much complexity [1]. However, the range
+of document images that projection-based methods can suc-
+cessfully segment text lines is limited. Moreover,projection-
+based methods cannot perform successful segmentation due
+to the situations that make segmentation in handwritten doc-
+uments difﬁcult. Hough transform-based methods assume
+that the text line components are ﬂat or with a low angle of
+inclination. For this reason, Hough transform-based meth-
+ods can perform successful text line segmentation in printed
+document images, but not for handwritten document images.
+In Hough transform-based methods, especially in languages
+such as Arabic, where small components used for punctua-
+tionandemphasisaredense,thesegmentationperformanceis
+considerably reduced in case of curvature between text lines.
+In connected component-based methods, each pixel is usu-
+ally of equal importance. Therefore, connected component-
+based methods fail especially if the manuscript has touching
+and overlapping text lines. The above-mentioned learning-
+free methods cannot correctly segment text line documents
+with vertical, multi-skewed, and multi-directed text lines,
+documents with curved and ﬂuctuated text lines, and doc-
+uments with touching and overlapping characters or words.
+Until the last decade, the text line segmentation problem was
+usually tried to be solved with learning-free methods. How-
+ever, to get rid of the constraints of learning-free methods,
+with the increase in computer processing capacities and data
+amount, machine learning and CNN-based text line segmen-
+tation methods have been used more frequently recently.
+2.2 CNN-based methods for TLS
+As learning-based approaches, handwritten text line seg-
+mentation methods using a fully convolutional network are
+proposed [3, 4, 24, 28, 33]. In [27], baseline detection on his-
+torical documents is performed using a convolutional neural
+network-based method. In another learning-based approach,
+text lines are segmented as X-height using adaptive U-net
+[23]. Fully convolutional neural network variants U-net [29]
+and RU-net are used for Arabic handwritten document seg-
+mentation [26]. In [12], text lines are extracted as baselines
+with ARU-Net based on U-net architecture. In [8], Mask R-
+CNN is used as a holistic method for text-line extraction
+in handwritten documents. The segmentation performance
+of the proposed method is evaluated by implementing vari-
+ous datasets including different kinds of challenges such as
+touching, overlapping characters, and diacritics. In [13], the
+123
+GAN-based text line segmentation method for challenging handwritten documents
+61
+TLS problem was handled as an instance segmentation prob-
+lem and implemented the model to various datasets.
+2.3 GANs for TLS and document analysis
+Generative adversarial networks (GAN) [6], which is one of
+the deep learning methods used as an effective method to
+generate images recently, have also been used to segment
+text lines in document images [7, 17]. In [17], the text line
+segmentation performance of the proposed GAN model is
+evaluated for different combinations of the GAN loss, L1
+loss, and L2 loss functions. The GAN model is applied on
+two different datasets consisting of manuscript document
+images and the best text line segmentation performance is
+achieved with the GAN model in which U-Net [29] is used
+as a generator and PatchGAN [14] is used as a discriminator.
+In our previous work, text line segmentation is performed on
+a dataset consisting of Arabic manuscripts with compelling
+features in terms of segmentation with GAN [7]. Another
+important application of GAN is the segmentation of texts
+from touching text and non-text components [25]. For this
+purpose, a GAN model with ResNet as a generator and Patch-
+Gan as a discriminator is proposed. The results show that the
+proposed GAN model can efﬁciently predict the text regions
+from the combined (text and non-text) images.
+3 Method
+As already mentioned, handwritten documents have several
+challenging problems for accurate text line segmentation
+(TLS).Amongthesechallenges,thepresenceoftouchingand
+overlapping characters, and skewed and multi-directed lines
+are the most bottleneck problems. In this work, we focused
+on producing a model that can overcome these problems in
+text line segmentation. For this purpose, the TLS problem
+was considered as an image-to-image translation problem
+and the proposed model was trained to generate the optimal
+mask for each text line. Here, the mask corresponds to a pla-
+nar structure covering all characters and punctuation marks
+in an individual text line. The main purpose of the image-
+to-image translation is to transfer images from one domain
+to another by performing operations such as color space,
+histogram transformations, style, or characteristic transfer.
+Hereby, in this work, image-to-image translation was uti-
+lized to map the spatial information from the original image
+domain to the mask image domain and so generate a mask
+for each text line. A generative adversarial network (GAN) is
+one of the powerful CNN-based models for image-to-image
+translation tasks. In this work, we’ve been inspired by the
+pix2pix model [14]. pix2pix model is composed of two com-
+petitive CNN models, U-Net and PatchGAN. U-Net is used
+in the generator part of the model, and PatchGAN is used
+in the discriminator part. These models play a min–max
+game, whereby the generator aims to produce better syn-
+thetic images and the discriminator updates itself to better
+discriminate the synthetic images produced by the generator.
+Text lines in document images with challenging segmen-
+tation characteristics were segmented using a generative
+adversarial network. The block diagram of the proposed
+method is given in Fig.1. In the training phase of the net-
+work, original document images and ground truth images
+containing text line masks were used. The GAN network
+model was trained to learn the spatial relationship between
+the original manuscript texts and the mask images of the text
+lines. Training and test data were created based on a data set
+consisting of Arabic texts with challenging characteristics.
+Moreover, in order to examine the effect of loss functions on
+the text line segmentation, the training process of the network
+was carried out using three different loss functions, L1, L2,
+and GAN loss function.
+3.1 Dataset
+SinceGANandCNN-basedmodelsarehighlydata-dependent,
+the content and diversity of the dataset for accurate model
+training are crucial. From this viewpoint, a dataset consist-
+ing of two datasets with different text line characteristics was
+generated. The whole dataset has many samples involving
+challenges in text line segmentation, which is the motivation
+for this work. Training and test data were generated from the
+whole dataset. Apart from the test data, to evaluate the over-
+all segmentation performance of the proposed GAN model,
+a separate test dataset was utilized. The characteristics of the
+datasets used and the processing of the data for the training
+and the evaluation of the GAN model are explained below.
+3.1.1 VML-AHTE dataset: Arabic handwritten text line
+extraction dataset
+VML-AHTE dataset [5] has characters that touch and overlap
+between adjacent text lines and too many diacritics. Out of a
+total of 30 pp. of high-resolution images in the dataset, 20 of
+them are set for training and 10 for testing. An example of a
+document image in the dataset and its corresponding ground
+truth image are given in Fig.2.
+3.1.2 VML-MOC: multiply oriented and curved handwritten
+text line dataset
+The text lines in this dataset containing Arabic manuscripts,
+containing side notes over the years, are highly skewed and
+curved. In the VML-MOC dataset [18], there are 20 images
+for training and 10 for testing. In this dataset, text lines in
+ground truth images are represented by masks covering the
+123
+62
+˙I Öz¸seker et al.
+Fig. 1 The block diagram of the proposed method
+Fig. 2 An example image from the VML-AHTE dataset and its ground
+truth
+text lines. An example of a document image in the dataset
+and its corresponding ground truth image are given in Fig.3.
+3.1.3 Preparing the dataset for training the network
+In the VML-AHTE and VML-MOC datasets, there are a
+total of 60 high-resolution document images, 30 of each. The
+training and test data were generated from training and test
+images. For each training document image, the text density
+in the document image is calculated and a total of 50,000
+training data of 512 × 512 size is created by calculating the
+text density in the document image and making sure that
+the content of the image cropped from random regions in
+direct proportion to this density is above a threshold value
+we set as 0 pixel. Our aim is to exclude image patches that
+do not contain any textual components from the training set.
+Examples from the training set are given in Fig.4.
+3.2 Evaluation
+The pix2pix-based GAN Model designed for text line seg-
+mentation is given in Fig.5. In the proposed method, the
+U-Net network model [29], which is also used in the seg-
+mentation of medical images as a generative network, is
+employed. The U-Net architecture consists of two parts:
+the encoder and the decoder. In the encoder part, the input
+image is transformed into feature maps using convolution
+and max-pooling layers. Each convolutional layer learns spe-
+ciﬁc features of the image and produces a lower-resolution
+feature map, providing information about the general struc-
+ture of the image. The transpose convolution layers in the
+decoder part rescale the feature maps, effectively increasing
+the size and bringing back the details in the image to gen-
+erate the target image. Each downsampling block contains a
+3 × 3 convolution, batch normalization, and a leaky ReLU
+layer with a slope of 0.2. In the upsampling blocks, there
+is a transposed convolution, Batch Normalization, a Dropout
+layer with a 50% rate, and a leaky ReLU layer with a slope of
+0.2. Moreover, it includes skip connections, which associate
+the feature maps from the encoder part with higher-resolution
+output, allowing the network to learn better features and pro-
+duce better results. In this work, the generative network takes
+original document images as input and produces text line
+masks as output. The number of convolution or transpose
+convolution layers used in the encoder and decoder parts
+123
+GAN-based text line segmentation method for challenging handwritten documents
+63
+Fig. 3 An example document
+image and ground truth image
+from the VML-MOC dataset
+Fig. 4 Examples from the training set
+can vary depending on the dataset or application, which also
+changes the depth of the network. In this work, the encoder
+and decoder depth of the U-Net network is set to 8, while the
+depth of PatchGan used as a discriminator is set to 4.
+The model was trained for 30 epochs using 1 batch per
+iteration on NVIDIA RTX 8000 with 50,000 pieces of data
+generated. The training process took about 4 days for 30
+epochs. In this work, mini-batch Stochastic Gradient Descent
+(SGD) was used during the training process of the network.
+Additionally, the Adam solver [15] was used with a learn-
+ing rate of 0.0002, and momentum parameters were set to
+β1 = 0.5, β2 = 0.999. Initially, the objective function of
+the pix2pix model is expressed as a min-max game between
+generator(G) and discriminator (D), where the generator
+aims to minimize the objective function and the discrimi-
+nator the opposite. As proven in [14, 17], L1 and L2 losses
+can outperform the original GAN loss function and produce
+better-quality masks for the text lines. In this work, L1 and L2
+losses, given in Eqs.1 and 2, are also applied and the segmen-
+tation performance of the method is examined for different
+losses.
+L L1(G) = Ex,y,z[∥(y −G(x, z))∥1]
+(1)
+L L2(G) = Ex,y,z[∥(y −G(x, z))∥2]
+(2)
+The test images were allocated to determine the text line
+segmentation performance of the trained network. These
+test images were divided into non-overlapping 512 × 512-
+sized patches. By examining the pixel density of the divided
+patches, the text line estimation of the patches with the text
+was made with the GAN model, and the text line mask of
+that patch was obtained. In order to reproduce the segmented
+document image from the patches, problems arise due to
+the different mask estimations in the areas remaining on the
+patch edges when the obtained pieces are directly combined
+(Fig.6a ). To solve this problem, a sliding window with the
+size of 512×512 was used while the test images were passed
+through the GAN model. A 512 × 512 sliding window is
+applied to the test image and given as input to the model. A
+300×300 model estimate at the center of the model output is
+123
+64
+˙I Öz¸seker et al.
+Fig. 5 Text line segmentation
+network
+Fig. 6 Segmentation results. a
+without sliding window
+application b with sliding
+window application
+taken and stored in a matrix. The horizontal and vertical step
+size of the sliding window is set as 300 pixels and this process
+is continued until all pixels in the image are processed. Thus,
+the non-overlapping regions of 300 pixels each are merged
+into the empty matrix, and the model is estimated against
+the original image. During the process, the text lines on the
+whole page were estimated by adding 300 × 300 sections in
+the middle of the document image at each window transi-
+tion. As a result of this process, a more natural transition is
+obtained as can be seen in Fig.6.
+In order to evaluate the results and compare the seg-
+mentation performance with the state-of-the-art methods
+rigorously, we utilized several performance metrics. The ﬁrst
+one is Intersection over Union (IU), which is evaluated on
+both pixel and line levels [8, 31]. Pixel IU is a measure of the
+ratio of correctly classiﬁed pixels to misclassiﬁed pixels and
+is calculated with:
+PixelIU =
+T P
+T P + F P + F N
+(3)
+Line IU is a measure of segmentation performance at line
+level. Line IU is calculated based on line precision and line
+recall metrics obtained with respect to a particular threshold
+value.
+LinePrecision =
+LineT P
+LineT P + LineF P
+(4)
+LineRecall =
+LineT P
+LineT P + LineF N
+(5)
+LineIU =
+CL
+CL + ML + EL
+(6)
+where CL is the number of correctly segmented text lines
+and a line is of CL if the line precision and the line recall
+are above the threshold value T. ML is the number of under-
+segmented text lines and a line feeds the ML value if the
+line recall is below the threshold value T. EL is the number
+of over-segmented text lines and when the line precision is
+below the threshold value T, the EL value increases. Here,
+the threshold value was set to 0.75 to compare our results
+with the ones of state-of-the-art methods.
+The second performance metrics set is introduced in [11].
+These metrics are the detection rate (DR), the recognition
+accuracy (RA), and the F-measure (FM) and are calculated
+depending on the match score obtained at a threshold value.
+The match score is calculated as:
+MatchScore(i, j) = T |G j ∩Pi|
+T |G j ∪Pi|
+(7)
+where G j is the set of the pixels in jth text line component
+of ground truth and Pi is the set of pixels in ith component of
+the predicted mask. For a given pair (i, j) if the match score
+is equal to or above the threshold value, it represents a one-
+to-one match. Here, the threshold value was set to 0.9. Let
+123
+GAN-based text line segmentation method for challenging handwritten documents
+65
+Fig. 7 VML-AHTE results: test
+image (left), ground truth
+(middle), GAN result (right)
+Table 1 Performance metric
+values on the VML-AHTE
+dataset
+Method
+Learning
+DR
+RA
+FM
+Line IU
+Pixel IU
+Barakat et al.[9]
+Unsupervised
+–
+–
+–
+99.28
+91.40
+UTLS [5]
+Unsupervised
+–
+–
+–
+98.55
+88.95
+Barakat et al.[19]
+Unsupervised
+–
+–
+–
+90.94
+83.40
+Mask-RCNN [8]
+Supervised
+84.43
+58.89
+68.77
+93.08
+86.97
+Mask-RCNN+[8]
+Supervised
+88.14
+87.78
+87.96
+97.83
+89.61
+FCN+EM [4]
+Supervised
+95.55
+92.80
+94.30
+94.52
+90.01
+Islam et al.[13]
+Supervised
+–
+–
+–
+97.10
+96.60
+GAN (GANLoss)
+Supervised
+83.78
+79.01
+81.26
+99.01
+95.03
+GAN (L1)
+Supervised
+90.42
+89.27
+89.80
+93.99
+94.54
+GAN (L2)
+Supervised
+87.65
+88.02
+87.73
+89.99
+93.29
+Fig. 8 a VML-MOC image b
+ground truth c segmentation
+result
+Fig. 9 a VML-MOC fragment
+image, b ground truth, c
+segmentation result
+123
+66
+˙I Öz¸seker et al.
+Fig. 10 a VML-MOC fragment image, b ground truth, c segmentation
+result
+M be the number of the one-to-one match pairs and N1 and
+N2 be the number of ground-truth and predicted text lines,
+respectively. The DR, RA, and FM metrics are calculated as
+follows:
+DR = M
+N1
+(8)
+RA = M
+N2
+(9)
+F M = 2 × DR × RA
+DR + RA
+(10)
+4 Results and discussion
+In our work, the text line is expressed with a mask to cover
+all the components in the text lines. We’ve trained three dif-
+ferent GAN models concerning three loss deﬁnitions. These
+GAN models were implemented to different test datasets,
+obtained from VML-MOC, and VML-AHTE datasets. So,
+we’ve analyzed the segmentation performance of the models
+for different losses. GAN models can create noisy compo-
+nents in generated mask images in each training scenario. To
+clean up these noisy components, components smaller than
+a certain pixel size in the network outputs are deleted by the
+connected component analysis. Qualitative and quantitative
+results for each dataset are given in the following subsections.
+4.1 Test results on VML-AHTE
+As stated before, the VML-AHTE dataset contains chal-
+lenges such as straight text lines with diacritics, and touching
+and overlapping characters between adjacent text lines. So,
+using this dataset makes it possible to determine the segmen-
+tation performance of the proposed GAN model under these
+challenges. Figure7 implies that the GAN model mostly
+generates masks in accordance with the diacritics and touch-
+ing/overlapping characters. As a comparison, segmentation
+results of the GAN model are given and compared with the
+ones of state-of-the-art unsupervised and supervised learn-
+ing methods in Table 1. According to the numerical results,
+GAN models show very competitive results with other state-
+of-the-art methods. For the DR, RA, and F M metrics, the
+GAN model with L1 loss has the best performance of pro-
+posed GAN models and second best performance among all
+methods. For the IoU metrics, the GAN model with original
+GAN Loss has the second-best performance for Line IU and
+third-best for the Pixel IU.
+4.2 Test results on VML-MOC
+VML-MOC dataset is composed of skewed, curved, and
+multi-directional text lines. These cases exist in many histor-
+ical handwritten documents and it’s important to cope with
+these challenges and improve the segmentation performance
+in those documents. As can be seen in Figs. 8, 9, and 10,
+the proposed GAN model can generally adapt and learn the
+skewed, curved, and multi-oriented text lines. Table 2 com-
+pares the proposed GAN models’ segmentation results with
+those of state-of-the-art unsupervised and supervised learn-
+ing methods. According to the results, GAN models with
+Table 2 Performance metric
+values on the VML-MOC
+dataset
+Method
+Learning
+DR
+RA
+FM
+Line IU
+Pixel IU
+Barakat et al.[18]
+Unsupervised
+–
+–
+–
+60.99
+80.96
+FCN+EM[4]
+Supervised
+26.45
+17.73
+31.09
+25.04
+48.71
+FCN+EM+Aug [4]
+Supervised
+84.43
+58.89
+68.77
+35.12
+60.97
+GAN (GANLoss)
+Supervised
+56.52
+52.07
+53.74
+51.34
+79.92
+GAN (L1)
+Supervised
+77.36
+80.63
+78.92
+73.56
+88.34
+GAN (L2)
+Supervised
+79.73
+82.94
+81.22
+72.80
+89.30
+123
+GAN-based text line segmentation method for challenging handwritten documents
+67
+L1 and L2 loss have the best IoU performance. Also, these
+models have better RA and F M and competitive DR per-
+formances.
+As shown in Fig.8 successful text line segmentation has
+been achieved even if the text lines are in different directions
+in regions where the text lines are more regular and have
+spaces. However, different orientations within a single text
+line or components such as notes and ornaments added to
+the end of the line can reduce the segmentation accuracy. As
+can be seen in Fig.9, the proposed GAN model has a good
+segmentation performance on regular text lines. However, as
+in Fig.10, the GAN model generates a combined mask for
+the text lines with different orientations in a small text region,
+resulting in a decrease in segmentation accuracy.
+The numerical results show that the proposed GAN model
+performs good segmentation performance on two different
+challenging datasets, VML-AHTE and VML-MOC. On the
+VML-AHTE dataset, including narrow text lines with heavy
+diacritics, the GAN models achieved a good overall seg-
+mentation accuracy and failed to generate separate masks
+where there are nested text lines with touching and overlap-
+ping characters. The proposed GAN model achieved the best
+segmentation results among all supervised and unsupervised
+methods on the VML-MOC dataset. It implies that the GAN
+model can learn and generate masks for heavily skewed and
+curved text lines. However, in the case of sudden changes
+in the orientation of neighboring text lines, the GAN model
+predicts a single text line behavior and generates a mask for
+these text lines.
+5 Conclusion
+In this work, a GAN-based text line segmentation method has
+been proposed. TLS problem was considered an image-to-
+image translation problem and the GAN model was trained to
+learn the spatial information of text lines within patch images
+by generating text line masks. The GAN model was trained
+with images from two challenging datasets, VML-AHTE and
+VML-MOC.Themainreasonforselectingthesedatasetswas
+to generate a model that can segment the skewed/curved text
+lines that exhibit rich diacritics, and touching/overlapping
+characters. In our work, we’ve trained the GAN model with
+different loss functions; GAN Loss, L1, and L2 loss. The
+resulting GAN models were tested on test images of VML-
+AHTE and VML-MOC datasets.
+The results show that the proposed GAN model is very
+effective for the segmentation of the text lines of challenging
+handwritten documents and has a very high potential to be
+developed for this crucial problem in handwritten and his-
+torical document analysis. Considering that most historical
+documents contain skewed and curved text lines, touch-
+ing and overlapping characters, footnotes, and/or side notes
+added with different orientations to the original manuscripts
+over the years, GAN models seem to have the ability to over-
+come these expectations.
+Even though the text line segmentation problem has been
+resolved in printed documents, it remains a challenging and
+unresolved issue for handwritten documents.TLS techniques
+represent one of the fundamental steps employed in docu-
+ment analysis systems and are typically utilized in the initial
+stages of these systems. Consequently, errors made at this
+stage tend to propagate, leading to more signiﬁcant errors
+throughout the system. Therefore, resolving the text line
+segmentation problem with high accuracy will enhance the
+accuracy of document analysis systems.TLS techniques are
+utilized in various tasks such as optical character recog-
+nition, handwritten document analysis, transcription tasks,
+document image understanding, word spotting, writer iden-
+tiﬁcation, content-based image retrieval, analysis of medical
+records, historical population records, and court records,
+among many other processes involving the analysis of hand-
+written documents. Although the main motivation of this
+work is on text line segmentation in challenging handwritten
+Arabic documents, the proposed model can also be modi-
+ﬁed and used in document de-warping tasks [10] following
+additional pre-processing steps
+The proposed method has achieved more successful
+results in the text line segmentation task on the VML-
+AHTE dataset compared to the images in the VML-MOC
+dataset. The text lines in the images in the VML-AHTE
+dataset exhibit a more regular arrangement, while those in the
+VML-MOC dataset are skewed, curved, multi-directional,
+and irregular. The proposed method may make incorrect seg-
+mentation in cases where there is excessive space between
+two words in a text line or sudden changes in the direction of
+the line. By analyzing the gaps between lines of text, regions
+with more gaps than normal can be identiﬁed and it is thought
+that segmentation success can be increased by applying a
+different segmentation technique or post-processing steps in
+these areas. Similarly, various ﬁlters can be used to detect the
+orientation of lines of text, thus improving the accuracy of
+line segmentation by applying a more precise segmentation
+technique in areas where line orientations change rapidly.
+Future work will include text line segmentation on
+Ottoman archival documents, which pose similar challenges
+to the datasets used in this paper and are studied by histori-
+ans and researchers from around the world. For this purpose,
+we aim to create a large dataset, overcome the shortcomings
+of our method with various post-processing techniques, and
+segment text lines in Ottoman archival documents. More-
+over, we plan to develop custom GAN models and present
+a holistic method for text line segmentation in challenging
+historical documents.
+123
+68
+˙I Öz¸seker et al.
+Acknowledgements This work has been funded by the Scientiﬁc
+Research Projects Coordination Department at Suleyman Demirel Uni-
+versity (Grant Number: FBG-2019-7324).
+Author Contributions All authors contributed to the conception and
+design. ˙IÖ prepared the training and test datasets. ˙IÖ and AAD carried
+out the training and testing stages. UÖ performed the veriﬁcation and
+analysis. ˙IÖ and AAD prepared all the ﬁgures and the original draft.
+UÖ prepared the tables; reviewed and edited the manuscript. All authors
+read and approved the ﬁnal manuscript.
+Data availibility No datasets were generated or analysed during the
+current study.
+Declarations
+Conﬂict of interest The authors declare that they have no conﬂict of
+interest.
+References
+1. Arivazhagan, M., Srinivasan, H., Srihari, S.: A statistical approach
+to line segmentation in handwritten documents. In: Document
+Recognition and Retrieval XIV, vol. 6500, pp. 245–255. SPIE
+(2007)
+2. Ataer, E., Duygulu, P.: Retrieval of ottoman documents. In: Pro-
+ceedings of the 8th ACM International Workshop on Multimedia
+Information Retrieval, pp. 155–162 (2006)
+3. Barakat, B., Droby, A., Kassis, M., El-Sana, J.: Text line segmen-
+tation for challenging handwritten document images using fully
+convolutional network. In: 2018 16th International Conference
+on Frontiers in Handwriting Recognition (ICFHR), pp. 374–379.
+IEEE (2018)
+4. Barakat, B.K., Droby, A., Alaasam, R., Madi, B., Rabaev, I., El-
+Sana, J.: Text line extraction using fully convolutional network and
+energy minimization. In: Pattern Recognition. ICPR International
+Workshops and Challenges: Virtual Event, January 10–15, 2021,
+Proceedings, Part VII, pp. 126–140. Springer, Berlin (2021)
+5. Barakat, B.K., Droby, A., Alaasam, R., Madi, B., Rabaev, I.,
+Shammes, R., El-Sana, J.: Unsupervised deep learning for text line
+segmentation. In: 2020 25th International Conference on Pattern
+Recognition (ICPR), pp. 2304–2311. IEEE (2021)
+6. Courville,A.,Bengio,Y.:Generativeadversarialnets.In:Advances
+in Neural. Information Processing Systems (2014)
+7. Demir, A.A., Öz¸seker, ˙I., Özkaya, U.: Text line segmentation in
+handwritten documents with generative adversarial networks. In:
+2021 International Conference on Innovations in Intelligent Sys-
+tems and Applications (INISTA), pp. 1–5. IEEE (2021)
+8. Droby, A., Kurar Barakat, B., Alaasam, R., Madi, B., Rabaev, I.,
+El-Sana, J.: Text line extraction in historical documents using mask
+R-CNN. Signals 3(3), 535–549 (2022)
+9. Droby, A., Kurar Barakat, B., Saabni, R., Alaasam, R., Madi, B.,
+El-Sana, J.: Understanding unsupervised deep learning for text line
+segmentation. Appl. Sci. 12(19), 9528 (2022)
+10. Dutta, A., Garai, A., Biswas, S., Das, A.K.: Segmentation of text
+lines using multi-scale CNN from warped printed and handwritten
+document images. Int. J. Doc. Anal. Recogn. (IJDAR) 24(4), 299–
+313 (2021)
+11. Gatos, B., Stamatopoulos, N, Louloudis, G.: ICFHR 2010 hand-
+writing segmentation contest. In: 2010 12th International Confer-
+ence on Frontiers in Handwriting Recognition, pp. 737–742. IEEE
+(2010)
+12. Grüning, T., Leifert, G., Strauß, T., Michael, J., Labahn, R.: A two-
+stage method for text line detection in historical documents. Int. J.
+Doc. Anal. Recogn. (IJDAR) 22(3), 285–302 (2019)
+13. Islam, A., Anjum, T., Khan, N.: Line extraction in handwritten
+documents via instance segmentation. In: International Journal on
+Document Analysis and Recognition (IJDAR), pp. 1–12 (2023)
+14. Isola, P., Zhu, J.-Y., Zhou, T., Efros, A.A.: Image-to-image transla-
+tion with conditional adversarial networks. In: Proceedings of the
+IEEE Conference on Computer Vision and Pattern Recognition,
+pp. 1125–1134 (2017)
+15. Kinga, D. A.: A methodforstochasticoptimization. In: Anon.
+International Conference on Learning Representations. SanDego:
+ICLR, vol. 7 (2015)
+16. Koo, H.I., Cho, N.I.: Text-line extraction in handwritten Chinese
+documents based on an energy minimization framework. IEEE
+Trans. Image Process. 21(3), 1169–1175 (2011)
+17. Kundu, S., Paul, S., Bera, S.K., Abraham, A., Sarkar, R.: Text-line
+extraction from handwritten document images using GAN. Expert
+Syst. Appl. 140, 112916 (2020)
+18. Kurar Barakat, B., Cohen, R., El-Sana, J.: VML-MOC: segment-
+ing a multiply oriented and curved handwritten text line dataset. In:
+2019 International Conference on Document Analysis and Recog-
+nition Workshops (ICDARW) vol. 6, pp. 13–18 (2019)
+19. Barakat, B.K., Droby, A., Saabni, R., El-Sana, J.: Unsupervised
+learning of text line segmentation by differentiating coarse patterns.
+In: International Conference on Document Analysis and Recogni-
+tion, pp. 523–537 (2021)
+20. Likforman-Sulem, L., Hanimyan, A., Faure, C.: A hough based
+algorithm for extracting text lines in handwritten documents. In:
+Proceedings of 3rd International Conference on Document Analy-
+sis and Recognition, vol.2, pp. 774–777. IEEE (1995)
+21. Louloudis, G., Gatos, B., Pratikakis, I., Halatsis, K.: A block-based
+hough transform mapping for text line detection in handwritten
+documents. In: Tenth International Workshop on Frontiers in Hand-
+writing Recognition, Suvisoft (2006)
+22. Louloudis, G., Gatos, B., Pratikakis, I., Halatsis, C.: Text line detec-
+tion in handwritten documents. Pattern Recogn. 41(12), 3758–3772
+(2008)
+23. Mechi, O., Mehri, M., Ingold, R., Essoukri Ben Amara, N.: Text
+line segmentation in historical document images using an adaptive
+u-net architecture. In: 2019 International Conference on Document
+Analysis and Recognition (ICDAR), pp. 369–374. IEEE (2019)
+24. Mechi, O., Mehri, M., Ingold, R., Amara, N.E.B.: A two-step
+framework for text line segmentation in historical Arabic or Latin
+document images. Int. J. Doc. Anal. Recogn. (IJDAR) 24(3), 197–
+218 (2021)
+25. Mondal, R., Bhowmik, S., Sarkar, R.: tsegGAN: a generative adver-
+sarial network for segmenting touching nontext components from
+text ones in handwriting. IEEE Trans. Instrum. Meas. 70, 1–10
+(2020)
+26. Neche, C., Belaid, A., Kacem-Echi, A.: Arabic handwritten docu-
+ments segmentation into text-lines and words using deep learning.
+In: 2019 International Conference on Document Analysis and
+Recognition Workshops (ICDARW), vol. 6, pp. 19–24. IEEE
+(2019)
+27. Oliveira, S.A., Seguin, B., Kaplan, F.: dhSegment: a generic
+deep-learning approach for document segmentation. In: 2018 16th
+International Conference on Frontiers in Handwriting Recognition
+(ICFHR), pp. 7–12. IEEE (2018)
+28. Renton, G., Chatelain, C., Adam, S., Kermorvant, C., Paquet, T.:
+Handwritten text line segmentation using fully convolutional net-
+work. In: 2017 14th IAPR International Conference on Document
+Analysis and Recognition (ICDAR), vol. 5, pp. 5–9. IEEE (2017)
+29. Ronneberger, O., Fischer, P., Brox, T.: U-net: convolutional net-
+works for biomedical image segmentation. In: Medical Image
+Computing and Computer-Assisted Intervention—MICCAI 2015:
+123
+GAN-based text line segmentation method for challenging handwritten documents
+69
+18th International Conference. Munich, Germany, October 5–9,
+2015,proceedings,PartIII18,pp.234–241.Springer,Berlin(2015)
+30. Ryu, J., Koo, H.I., Cho, N.I.: Language-independent text-line
+extraction algorithm for handwritten documents. IEEE Signal Pro-
+cess. Lett. 21(9), 1115–1119 (2014)
+31. Simistira, F., Bouillon, M., Seuret, M., Würsch, M., Alberti, M.,
+Ingold, R., Liwicki, M.: Icdar2017 competition on layout anal-
+ysis for challenging medieval manuscripts. In: 2017 14th IAPR
+International Conference on Document Analysis and Recognition
+(ICDAR), vol. 1, pp. 1361–1370. IEEE (2017)
+32. Tonghua, S., Zhang, T., Guan, D.: Corpus-based HIT-MW database
+for ofﬂine recognition of general-purpose Chinese handwritten
+text. IJDAR 10, 27–38 (2007)
+33. Vo, Q.N., Kim, S.H., Yang, H.J., Lee, G.S.: Text line segmenta-
+tion using a fully convolutional network in handwritten document
+images. IET Image Proc. 12(3), 438–446 (2018)
+Publisher’s Note Springer Nature remains neutral with regard to juris-
+dictional claims in published maps and institutional afﬁliations.
+Springer Nature or its licensor (e.g. a society or other partner) holds
+exclusive rights to this article under a publishing agreement with the
+author(s) or other rightsholder(s); author self-archiving of the accepted
+manuscript version of this article is solely governed by the terms of such
+publishing agreement and applicable law.
+123

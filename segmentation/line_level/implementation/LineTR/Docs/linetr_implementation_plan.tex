@@ -1,0 +1,145 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, geometry, graphicx, hyperref, xcolor, booktabs, enumitem, titlesec}
+\usepackage[T1]{fontenc}
+\geometry{margin=1in}
+
+\title{\textbf{LineTR End-to-End Implementation Plan Report}}
+\author{System Architecture \& Engineering Plan}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report outlines the end-to-end implementation strategy for deploying the LineTR text line segmentation model tailored for our specific use case (e.g., historical Modi script manuscripts). To maintain a scalable, modular, and maintainable codebase, the architecture is strictly separated into interacting Python modules rather than monolithic scripts or notebooks. The implementation is broken down into six sequential phases. \textbf{Note: This document provides conceptual and architectural blueprints with strictly no code.}
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction and Architecture Principles}
+The objective of this project is to implement LineTR from scratch. The system is designed to handle high-resolution, complex handwritten manuscripts without downsampling. To achieve this, the system uses a two-stage approach: predicting line structures on dynamically sized patches (Stage 1) and generating polygonal bounds via seam generation (Stage 2). 
+
+\textbf{Modularity Principle:} The project will be divided into specific Python modules (e.g., configurations, data loaders, neural network blocks, loss calculations, and orchestration).
+
+---
+
+\section{Phase 1: Data Preparation \& Context-Adaptive Patching}
+
+\subsection{Concept}
+Instead of resizing an entire document and losing dense text features, LineTR relies on extracting patches. Because text scale varies, the patch size must be adaptive. The system calculates an expected inter-line gap from a sample of patches, computes a global average, and then defines a fixed "context-adapted" patch size for the entire document.
+
+\subsection{Implementation Plan}
+\begin{itemize}
+    \item \textbf{Proposed Module:} \texttt{data\_processing.py}
+    \item \textbf{Data Ingestion:} Implement functions to load high-resolution manuscript images and normalize their color channels.
+    \item \textbf{Dynamic Sampler:} Implement an algorithm that samples candidate patches at various predefined scales, interfaces with the initial model forward-pass to measure line gaps, and computes the optimal patch size dimension $t$.
+    \item \textbf{Patch Extraction:} Create a sliding-window grid generator that extracts overlapping $t \times t$ patches and resizes them uniformly to $256 \times 256$ for neural network consumption.
+    \item \textbf{Data Loaders:} Build a standard dataset and dataloader interface that can yield these patches in batches during both training and inference.
+\end{itemize}
+
+---
+
+\section{Phase 2: Core Network Architecture (Stage-1 Models)}
+
+\subsection{Concept}
+Stage 1 represents the deep learning core, consisting of three primary components: a shared Vision Transformer (ViT) backbone, a DETR-style Line-Parameter Generator, and a hybrid CNN-Transformer Text-Energy Map Generator.
+
+\subsection{Implementation Plan}
+\begin{itemize}
+    \item \textbf{Proposed Modules:} \texttt{models.py}, \texttt{vit\_backbone.py}, \texttt{line\_generator.py}, \texttt{energy\_generator.py}
+    \item \textbf{Shared Backbone (\texttt{vit\_backbone.py}):} Construct a standard ViT architecture configured for $16 \times 16$ patch sizes to output a specific embedding dimension.
+    \item \textbf{Line-Parameter Generator (\texttt{line\_generator.py}):} 
+    \begin{itemize}
+        \item Define the learnable line queries and positional priors.
+        \item Construct the transformer decoder layers, specifically separating self-attention and decoupled row-column cross-attention to process the ViT features.
+        \item Attach a lightweight feed-forward head that outputs the normalized coordinates ($\mu_x, \mu_y$), slope ($m$), and confidence probability.
+    \end{itemize}
+    \item \textbf{Text-Energy Map Generator (\texttt{energy\_generator.py}):}
+    \begin{itemize}
+        \item Construct a CNN encoder that iteratively downsamples the input.
+        \item Build a transformer decoder module that cross-attends the ViT backbone features with the CNN features.
+        \item Construct a CNN decoder with skip connections linking back to the CNN encoder to reconstruct spatial resolution.
+        \item Apply a Sigmoid activation layer at the end to output a continuous $[0, 1]$ map.
+    \end{itemize}
+\end{itemize}
+
+---
+
+\section{Phase 3: Loss Formulations \& Training Pipeline}
+
+\subsection{Concept}
+Because LineTR predicts a set of un-ordered geometric lines rather than pixel classifications, it requires bipartite matching (Hungarian Algorithm) to pair ground-truth lines with model predictions before computing losses. The training is conducted in two distinct phases to ensure stability.
+
+\subsection{Implementation Plan}
+\begin{itemize}
+    \item \textbf{Proposed Modules:} \texttt{losses.py}, \texttt{trainer.py}
+    \item \textbf{Loss Formulations (\texttt{losses.py}):}
+    \begin{itemize}
+        \item Implement the Bipartite Matching cost function utilizing distance geometry.
+        \item Implement the Geometric Loss function, which computes the squared vertical distances at the left and right boundaries of the patch.
+        \item Implement the Focal Loss function to penalize false positives and missed line classifications.
+    \end{itemize}
+    \item \textbf{Training Orchestration (\texttt{trainer.py}):}
+    \begin{itemize}
+        \item \textit{Training Phase 1:} Define a training loop that exclusively updates the weights of the ViT Backbone and Line-Parameter Generator over a set number of epochs.
+        \item \textit{Training Phase 2:} Define a subsequent loop that freezes the aforementioned models and exclusively trains the Text-Energy Map Generator.
+        \item Integrate learning rate schedulers and optimizer configurations (e.g., AdamW).
+    \end{itemize}
+\end{itemize}
+
+---
+
+\section{Phase 4: Post-Processing \& Global Stitching}
+
+\subsection{Concept}
+During inference, the model generates outputs for hundreds of isolated, overlapping patches. These localized predictions must be seamlessly mapped back into the coordinate space of the original high-resolution document.
+
+\subsection{Implementation Plan}
+\begin{itemize}
+    \item \textbf{Proposed Module:} \texttt{post\_processing.py}
+    \item \textbf{Scribble Un-normalization:} Implement a function to reverse the coordinate normalization, mapping patch-level midpoints and slopes to document-level pixel coordinates.
+    \item \textbf{Iterative Projection-Merging:} Implement a clustering algorithm that groups nearby, overlapping line segments (scribbles) based on spatial proximity and slope similarity, merging them into unified, global text-line scribbles.
+    \item \textbf{Energy Map Stitching:} Implement a blending mechanism to stitch the predicted $256 \times 256$ continuous energy patches together, handling the overlapping boundaries to output a single, smooth, high-resolution global energy map.
+\end{itemize}
+
+---
+
+\section{Phase 5: Stage-2 Seam Generation}
+
+\subsection{Concept}
+The global scribbles indicate \textit{where} the text is, and the continuous energy map indicates the \textit{density/presence} of the text. Seam Carving algorithms are used to find the optimal pathways (valleys of low energy) between the scribbles to draw precise polygonal boundaries around the text lines.
+
+\subsection{Implementation Plan}
+\begin{itemize}
+    \item \textbf{Proposed Module:} \texttt{seam\_carving.py}
+    \item \textbf{Cost Matrix Construction:} Use the continuous energy map directly (without thresholding) to build a cumulative energy traversal matrix.
+    \item \textbf{Dynamic Programming Seam Search:} Implement the core seam-finding logic. Condition the search boundaries using the global scribbles so that the algorithm reliably finds the medial, upper, and lower seams.
+    \item \textbf{Polygon Extraction:} Convert the generated seams into closed, distinct polygon coordinates that can be exported or plotted over the original image.
+\end{itemize}
+
+---
+
+\section{Phase 6: Orchestration \& Inference Pipeline}
+
+\subsection{Concept}
+The final phase ties all modular components together into an automated, seamless pipeline that can accept a raw image and output final polygonal segmentation coordinates.
+
+\subsection{Implementation Plan}
+\begin{itemize}
+    \item \textbf{Proposed Modules:} \texttt{main.py}, \texttt{config.yaml}
+    \item \textbf{Configuration Management (\texttt{config.yaml}):} Store all hyperparameters (patch sizes, neural network dimensions, learning rates, loss weights).
+    \item \textbf{End-to-End Orchestrator (\texttt{main.py}):} 
+    \begin{itemize}
+        \item Load configurations and instantiate the models.
+        \item Load a document via \texttt{data\_processing.py}.
+        \item Execute the dynamic patch generation and feed patches through \texttt{models.py}.
+        \item Route the neural outputs through \texttt{post\_processing.py}.
+        \item Pass the global maps into \texttt{seam\_carving.py} to finalize the polygons.
+        \item Save or visualize the final segmentation results.
+    \end{itemize}
+\end{itemize}
+
+\end{document}

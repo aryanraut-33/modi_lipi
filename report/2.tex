@@ -1,0 +1,595 @@
+\documentclass[12pt, a4paper]{article}
+
+% ---- Packages ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{cite}
+
+\geometry{margin=1in}
+\setlength{\parskip}{0.6em}
+\setlength{\parindent}{0em}
+
+\title{\textbf{Preprocessing and Line-Level Segmentation for Archaic Modi Script Documents: A Technical Report}}
+\author{Aryan}
+\date{May 2025}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+% SECTION 1: INTRODUCTION
+% ============================================================
+\section{Introduction}
+
+The Modi script served as the official writing system for the Marathi language throughout the medieval period in India, spanning from the 12th century to 1952. An estimated 40 million documents written in this script remain untransliterated, encompassing land records, Ayurvedic prescriptions, administrative decrees, and spiritual texts~\cite{kausadikar2025}. These documents are irreplaceable primary sources for the study of medieval Indian history, science, and governance.
+
+Digitizing these archaic manuscripts is the foundational prerequisite for any downstream analysis, whether that analysis is performed by human historians or by automated systems such as the MoScNet Vision-Language Model framework proposed by Kausadikar et al.~\cite{kausadikar2025}. However, the raw scanned images of these centuries-old documents present formidable challenges: faded ink, paper degradation, bleed-through from the reverse side, speckle noise from aged fibres, and physical skew introduced during the scanning process. Furthermore, the cursive, connected nature of Modi calligraphy---where the \textit{Shirorekha} (a continuous horizontal headline) links all characters on a line without inter-word spacing---makes line-level segmentation exceptionally difficult compared to Latin or Devanagari scripts.
+
+This report provides a detailed technical account of the first two completed phases of our end-to-end transliteration pipeline:
+
+\begin{enumerate}[label=\textbf{Phase \arabic*:}, leftmargin=2.5cm]
+    \item \textbf{Image Preprocessing} --- A six-stage pipeline that converts a raw archaic scan into a clean, binary, deskewed image suitable for algorithmic consumption.
+    \item \textbf{Line-Level Segmentation} --- An Anisotropic Gaussian Blob segmentation engine coupled with an iterative Autocorrelation-based parameter tuning loop that automatically extracts individual text lines from the preprocessed document.
+\end{enumerate}
+
+The preprocessing pipeline is grounded in the methodology described by Kausadikar et al.~\cite{kausadikar2025} for the creation of the MoDeTrans dataset. We extend their pipeline with two novel additions: (a)~an automated connected-component speckle removal stage, and (b)~a Projection Profile Variance-based deskewing algorithm that replaces manual Photoshop intervention. The segmentation engine draws from the learning-free Anisotropic Gaussian filter approach of Barakat et al.~\cite{barakat2020} and augments it with a self-correcting iterative masking loop driven by Autocorrelation Function (ACF) frequency analysis.
+
+
+% ============================================================
+% SECTION 2: IMAGE PREPROCESSING
+% ============================================================
+\section{Phase 1: Image Preprocessing}
+
+The goal of the preprocessing phase is to transform a raw, noisy, potentially skewed colour scan of an archaic Modi manuscript into a clean binary image with black ink on a white background, perfectly aligned horizontally. The pipeline consists of six sequential stages. Each stage addresses a specific category of degradation.
+
+% ---- Placeholder for Preprocessing Pipeline Diagram ----
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{preprocessing.png}
+    \caption{End-to-end preprocessing pipeline for archaic Modi script documents. Each box represents a processing stage with its key parameters.}
+    \label{fig:preprocess_pipeline}
+\end{figure}
+
+
+% ---- 2.1 Grayscale Conversion ----
+\subsection{Stage 1: Grayscale Conversion}
+
+The input to the pipeline is a raw BGR (Blue-Green-Red) colour image as read by OpenCV. Since all subsequent operations are intensity-based and do not require colour information, the first step is to collapse the three-channel image into a single-channel grayscale representation. This is performed using the standard luminance-weighted formula:
+
+\begin{equation}
+    I_{\text{gray}}(x,y) = 0.299 \cdot R(x,y) + 0.587 \cdot G(x,y) + 0.114 \cdot B(x,y)
+    \label{eq:grayscale}
+\end{equation}
+
+This weighting reflects the human eye's differential sensitivity to the three primary colours, with green contributing the most to perceived brightness. The resulting grayscale image $I_{\text{gray}} \in [0, 255]$ preserves the perceptual contrast between the dark ink strokes and the lighter paper background while reducing the data dimensionality by a factor of three, thereby accelerating all downstream computations.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}ll@{}}
+\textit{Library} & OpenCV (\texttt{cv2}) \\
+\textit{API Call} & \texttt{cv2.cvtColor(image, cv2.COLOR\_BGR2GRAY)} \\
+\textit{Wrapper} & \texttt{to\_grayscale(image\_bgr)} \\
+\textit{Source File} & \texttt{preprocessing/preprocess.py} \\
+\end{tabular}
+}}
+
+
+% ---- 2.2 Noise Removal ----
+\subsection{Stage 2: Noise Removal via Bilateral Filtering}
+
+Historical documents are afflicted by high-frequency noise originating from paper grain, scanner artefacts, foxing (brown spots from fungal growth), and micro-tears. A naive Gaussian blur would suppress this noise but would simultaneously erode the sharp edges of the calligraphic strokes---an unacceptable trade-off for a script as intricate as Modi.
+
+We employ the \textbf{Bilateral Filter}~\cite{tomasi1998}, an edge-preserving smoothing operator. Unlike a standard Gaussian filter that weights neighbouring pixels solely by their spatial distance from the centre pixel, the bilateral filter introduces a second weighting term based on \emph{intensity similarity}. The output at pixel $(x,y)$ is defined as:
+
+\begin{equation}
+    I_{\text{bf}}(x,y) = \frac{1}{W_p} \sum_{(x_i, y_i) \in \Omega} I(x_i, y_i) \cdot \underbrace{e^{-\frac{(x_i - x)^2 + (y_i - y)^2}{2\sigma_s^2}}}_{\text{Spatial Gaussian}} \cdot \underbrace{e^{-\frac{(I(x_i,y_i) - I(x,y))^2}{2\sigma_r^2}}}_{\text{Range Gaussian}}
+    \label{eq:bilateral}
+\end{equation}
+
+where $W_p$ is a normalizing factor, $\Omega$ is the neighbourhood of diameter $d$, $\sigma_s$ controls the spatial extent of the filter, and $\sigma_r$ controls the sensitivity to intensity differences.
+
+In our implementation, the parameters are configured as follows:
+
+\begin{table}[H]
+\centering
+\caption{Bilateral Filter Parameters}
+\label{tab:bilateral_params}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+\midrule
+Neighbourhood diameter & $d$ & 5 \\
+Colour/Range sigma & $\sigma_r$ (\texttt{sigmaColor}) & 100 \\
+Spatial sigma & $\sigma_s$ (\texttt{sigmaSpace}) & 100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The relatively high $\sigma_r = 100$ allows the filter to aggressively smooth noisy paper textures (where neighbouring pixels have similar intensities) while simultaneously preserving the sharp transition at ink-to-paper boundaries (where the intensity difference exceeds the Gaussian falloff). This directly follows the denoising strategy described by Kausadikar et al.~\cite{kausadikar2025}, who specify bilateral filtering with a small kernel for Modi script preprocessing.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}ll@{}}
+\textit{Library} & OpenCV (\texttt{cv2}) \\
+\textit{API Call} & \texttt{cv2.bilateralFilter(gray, d, sigmaColor, sigmaSpace)} \\
+\textit{Wrapper} & \texttt{remove\_noise(gray, cfg: PreprocessConfig)} \\
+\textit{Source File} & \texttt{preprocessing/preprocess.py} \\
+\textit{Config Class} & \texttt{PreprocessConfig} (Python \texttt{dataclass}) \\
+\end{tabular}
+}}
+
+
+% ---- 2.3 Adaptive Gaussian Thresholding ----
+\subsection{Stage 3: Adaptive Gaussian Thresholding (Binarization)}
+
+The denoised grayscale image must be converted into a binary image where ink pixels are black (0) and paper pixels are white (255). A global threshold (e.g., Otsu's method) fails on archaic manuscripts because the background intensity varies dramatically across the page---the centre of a well-preserved document may have a bright cream background, while the margins may be darkened by centuries of handling, moisture, or foxing.
+
+We employ \textbf{Adaptive Gaussian Thresholding}~\cite{kausadikar2025}, which computes a local threshold for each pixel based on the weighted mean of its neighbourhood:
+
+\begin{equation}
+    T(x,y) = \frac{\sum_{(x_i,y_i) \in \mathcal{N}} G_{\sigma}(x_i - x, y_i - y) \cdot I(x_i, y_i)}{\sum_{(x_i,y_i) \in \mathcal{N}} G_{\sigma}(x_i - x, y_i - y)} - C
+    \label{eq:adaptive_thresh}
+\end{equation}
+
+where $\mathcal{N}$ is a square neighbourhood of size $B \times B$ (the \emph{block size}), $G_\sigma$ is a Gaussian weighting kernel, and $C$ is a constant subtracted from the weighted mean to shift the threshold. A pixel is classified as foreground (ink) if $I(x,y) < T(x,y)$, and background otherwise.
+
+\begin{table}[H]
+\centering
+\caption{Adaptive Thresholding Parameters}
+\label{tab:thresh_params}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Default Value} \\
+\midrule
+Block size (must be odd) & $B$ & 61 \\
+Threshold constant & $C$ & 21 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A large block size of $B = 61$ pixels was selected to accommodate the wide variation in stroke thickness and local illumination gradients typical of Modi manuscripts. The constant $C = 21$ provides an aggressive bias toward classifying ambiguous pixels as background, which prevents faint paper textures from being misidentified as ink. An automatic polarity check ensures the output always has dark text on a light background, regardless of the input's original contrast orientation: if the mean pixel value of the binary image falls below 127, the image is inverted.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}lp{10cm}@{}}
+\textit{Library} & OpenCV (\texttt{cv2}) \\
+\textit{API Call} & \texttt{cv2.adaptiveThreshold(src, 255,} \\
+ & \texttt{cv2.ADAPTIVE\_THRESH\_GAUSSIAN\_C,} \\
+ & \texttt{cv2.THRESH\_BINARY, blockSize, C)} \\
+\textit{Wrapper} & \texttt{adaptive\_gaussian\_threshold(denoised, cfg)} \\
+\textit{Source File} & \texttt{preprocessing/preprocess.py} \\
+\end{tabular}
+}}
+
+
+% ---- 2.4 Speckle Removal ----
+\subsection{Stage 4: Speckle Removal via Connected-Component Analysis}
+\label{sec:speckle}
+
+\textbf{This stage is a novel addition to the pipeline described by Kausadikar et al.}~\cite{kausadikar2025}, who handled residual noise through manual Photoshop-based intervention. We replace this manual step with a fully automated connected-component filtering algorithm.
+
+After binarization, the image typically contains thousands of small isolated white regions (in the inverted foreground) that correspond to paper grain, scanner dust, or micro-tears---not actual ink strokes. These speckles, if left unchecked, severely degrade the subsequent segmentation stage by creating false peaks in the Horizontal Projection Profile.
+
+Our algorithm operates as follows:
+
+\begin{enumerate}
+    \item \textbf{Inversion}: The binary image is inverted so that foreground (ink + noise) pixels become white (255) and background becomes black (0).
+    \item \textbf{Connected-Component Labelling}: OpenCV's 8-connected component analysis (\texttt{cv2.connectedComponentsWithStats}) is applied, which assigns a unique integer label to each connected blob and computes its bounding box dimensions $(x, y, w, h)$ and pixel area $A$.
+    \item \textbf{Morphometric Filtering}: A component is retained as a legitimate ink stroke if and only if it satisfies at least one of the following conditions:
+    \begin{equation}
+        \text{Keep}(c) = \begin{cases}
+            \text{True} & \text{if } A(c) \geq A_{\min} \\
+            \text{True} & \text{if } h(c) \geq h_{\min} \;\wedge\; w(c) \geq w_{\min} \\
+            \text{False} & \text{otherwise}
+        \end{cases}
+        \label{eq:speckle}
+    \end{equation}
+    \item \textbf{Reconstruction}: Only retained components are painted onto a clean canvas, and the result is inverted back to the standard black-text-on-white convention.
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\caption{Speckle Removal Parameters}
+\label{tab:speckle_params}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+\midrule
+Minimum component area & $A_{\min}$ & 100 pixels \\
+Minimum component height & $h_{\min}$ & 10 pixels \\
+Minimum component width & $w_{\min}$ & 7 pixels \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The dual-criteria approach (area \emph{or} dimensional thresholds) is critical for Modi script. Many legitimate characters in Modi are narrow vertical strokes that may have small areas but significant height. A purely area-based filter would incorrectly discard these. Conversely, some diacritical marks are short but wide. The disjunctive condition ensures both morphologies are preserved while eliminating the isotropic point-noise that characterizes aged paper.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}lp{10cm}@{}}
+\textit{Libraries} & OpenCV (\texttt{cv2}), NumPy (\texttt{numpy}) \\
+\textit{API Calls} & \texttt{cv2.connectedComponentsWithStats(inv, 8)} for component labelling; NumPy array indexing for morphometric filtering and canvas reconstruction \\
+\textit{Wrapper} & \texttt{remove\_speckle\_components(binary, cfg)} \\
+\textit{Source File} & \texttt{preprocessing/preprocess.py} \\
+\end{tabular}
+}}
+
+
+% ---- 2.5 Deskewing ----
+\subsection{Stage 5: Projection Profile Variance Deskewing}
+\label{sec:deskew}
+
+\textbf{This stage represents our second novel contribution} to the preprocessing pipeline. While Kausadikar et al.~\cite{kausadikar2025} mention deskewing as a final step in their preprocessing workflow, no algorithmic details are provided. Our implementation employs the \textbf{Projection Profile Variance} method, a classical and highly robust approach to skew estimation for text-heavy documents~\cite{postl1986, baird1987}.
+
+The fundamental insight is that when text lines are perfectly horizontal, the Horizontal Projection Profile (HPP)---the row-wise sum of foreground pixels---exhibits the sharpest possible alternation between high-density peaks (text rows) and zero-density valleys (inter-line gaps). Any rotational skew causes these peaks and valleys to blur into each other, reducing the variance of the profile.
+
+\textbf{Algorithm}:
+\begin{enumerate}
+    \item \textbf{Downscaling}: If the image width exceeds 1000 pixels, it is proportionally downscaled to accelerate the sweep. The angle is computed on the reduced image and applied to the full-resolution original.
+    \item \textbf{Angular Sweep}: The image is rotated through $N$ candidate angles $\theta_k \in [-\theta_{\max}, +\theta_{\max}]$ with step size $\Delta\theta$:
+    \begin{equation}
+        \theta_k = -\theta_{\max} + k \cdot \Delta\theta, \quad k = 0, 1, \ldots, \left\lfloor \frac{2\theta_{\max}}{\Delta\theta} \right\rfloor
+    \end{equation}
+    \item \textbf{Variance Computation}: At each angle $\theta_k$, the HPP $h_k(y)$ is computed and its variance is calculated:
+    \begin{equation}
+        \text{Var}(\theta_k) = \frac{1}{H} \sum_{y=0}^{H-1} \left( h_k(y) - \bar{h}_k \right)^2
+    \end{equation}
+    \item \textbf{Optimal Angle Selection}: The deskew angle is chosen as:
+    \begin{equation}
+        \theta^* = \arg\max_{\theta_k} \; \text{Var}(\theta_k)
+        \label{eq:deskew}
+    \end{equation}
+    \item \textbf{Rotation}: The full-resolution binary image is rotated by $\theta^*$ using affine transformation with cubic interpolation and a white border fill.
+\end{enumerate}
+
+\begin{table}[H]
+\centering
+\caption{Deskewing Parameters}
+\label{tab:deskew_params}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+\midrule
+Maximum search angle & $\theta_{\max}$ & $\pm 10°$ \\
+Angular step size & $\Delta\theta$ & $0.5°$ \\
+Total candidate angles & $N$ & 41 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The $\pm 10°$ range is sufficient for scanned archival documents, which rarely exhibit skew exceeding $5°$--$7°$. The $0.5°$ resolution provides sub-degree precision in angle estimation. Together with the downscaling optimisation, the entire deskew computation completes in under 1.5 seconds on a standard laptop CPU.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}lp{10cm}@{}}
+\textit{Libraries} & OpenCV (\texttt{cv2}), NumPy (\texttt{numpy}) \\
+\textit{API Calls} & \texttt{np.arange()} for angular sweep generation; \texttt{cv2.getRotationMatrix2D()} and \texttt{cv2.warpAffine()} for affine rotation; \texttt{np.var()} for variance computation \\
+\textit{Wrappers} & \texttt{estimate\_skew\_hpp(binary)} $\rightarrow$ returns $\theta^*$; \texttt{deskew(binary, angle)} $\rightarrow$ returns rotated image \\
+\textit{Orchestrator} & \texttt{preprocess\_image\_array(image\_bgr, cfg)} \\
+\textit{Source File} & \texttt{preprocessing/preprocess.py} \\
+\end{tabular}
+}}
+
+
+% ---- Preprocessing Summary ----
+\subsection{Summary of Preprocessing Contributions}
+
+To summarise, our preprocessing pipeline faithfully implements the four core stages described by Kausadikar et al.~\cite{kausadikar2025}---grayscale conversion, bilateral filtering, adaptive Gaussian thresholding, and deskewing---while introducing two significant enhancements:
+
+\begin{enumerate}
+    \item \textbf{Automated Speckle Removal} (Section~\ref{sec:speckle}): Replaces manual Photoshop-based noise removal with a deterministic, reproducible connected-component morphometric filter.
+    \item \textbf{HPP Variance Deskewing} (Section~\ref{sec:deskew}): Provides a fully automated, algorithmically precise deskewing method where the original paper leaves the implementation unspecified.
+\end{enumerate}
+
+
+% ============================================================
+% SECTION 3: LINE-LEVEL SEGMENTATION
+% ============================================================
+\section{Phase 2: Line-Level Segmentation}
+
+Given the clean, deskewed binary image produced by Phase~1, the objective of this phase is to identify the vertical extents $(y_{\text{start}}, y_{\text{end}})$ of every individual line of text in the document. These bounding regions are then used to crop and extract each line as a separate image for downstream character-level recognition or VLM-based transliteration.
+
+Our segmentation system comprises two tightly coupled components: (1)~the \textbf{Anisotropic Gaussian Blob Segmenter}, a learning-free algorithm inspired by Barakat et al.~\cite{barakat2020}, and (2)~an \textbf{Autocorrelation-based Iterative Parameter Tuning Loop} that automatically derives optimal segmenter parameters from the spatial frequency structure of the document.
+
+% ---- Segmentation Diagram ----
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{segmentation.png}
+    \caption{Line-level segmentation pipeline showing the Anisotropic Gaussian Blob engine and the iterative ACF-driven parameter tuning loop.}
+    \label{fig:seg_pipeline}
+\end{figure}
+
+
+% ---- 3.1 Anisotropic Gaussian Blob Segmentation ----
+\subsection{Anisotropic Gaussian Blob Segmentation}
+
+The core segmentation algorithm exploits the fundamental geometric property of text documents: characters within a single line are spatially close in the horizontal direction, while adjacent lines are separated by a vertical gap. By applying a directional (anisotropic) Gaussian blur that smears ink strongly in the horizontal direction but only minimally in the vertical direction, individual characters on the same line merge into a single elongated blob, while lines remain separated.
+
+The algorithm proceeds in four stages:
+
+\begin{enumerate}
+    \item \textbf{Internal Binarization}: The preprocessed image is re-binarized using adaptive thresholding with a $15 \times 15$ block and $C = 10$ to produce an inverted binary mask where ink pixels are white (255).
+
+    \item \textbf{Directional Gaussian Blur}: An anisotropic Gaussian kernel of size $(\sigma_x, \sigma_y)$ is applied to the binary mask. The horizontal kernel width $\sigma_x$ is set much larger than $\sigma_y$ to create a strong horizontal smear:
+    \begin{equation}
+        I_{\text{smeared}}(x,y) = (I_{\text{bin}} * G)(\sigma_x, \sigma_y)
+        \label{eq:aniso_blur}
+    \end{equation}
+    where $G(\sigma_x, \sigma_y)$ denotes a 2D Gaussian kernel with independent standard deviations along each axis. The key constraint is $\sigma_x \gg \sigma_y$, ensuring horizontal connectivity within a line while preserving vertical separation between lines.
+
+    \item \textbf{Blob Thresholding}: The smeared image is thresholded at $T_{\text{blob}} = 50$ to produce solid white blobs, each representing one text line.
+
+    \item \textbf{Contour Extraction and Filtering}: External contours of the blobs are detected using OpenCV's \texttt{findContours}. Each contour's axis-aligned bounding box $(x, y, w, h)$ is computed. Contours are filtered by two criteria to remove noise fragments:
+    \begin{equation}
+        \text{ValidLine}(c) = \left( w(c) > 0.1 \cdot W_{\text{img}} \right) \;\wedge\; \left( h(c) > 10 \right)
+        \label{eq:contour_filter}
+    \end{equation}
+    where $W_{\text{img}}$ is the image width. This ensures only blobs spanning at least 10\% of the page width and at least 10 pixels in height are accepted as text lines.
+\end{enumerate}
+
+The resulting line regions are sorted top-to-bottom by their $y$-coordinate and returned as a list of $(y_{\text{start}}, y_{\text{end}})$ tuples with an optional padding parameter $p$ (default 5~pixels) to prevent clipping of ascenders and descenders.
+
+\begin{table}[H]
+\centering
+\caption{Anisotropic Gaussian Segmenter Parameters}
+\label{tab:seg_params}
+\begin{tabular}{@{}lccp{5.5cm}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Default} & \textbf{Role} \\
+\midrule
+Horizontal stretch & $\sigma_x$ & 41 & Bridges inter-word gaps within a line \\
+Vertical stretch & $\sigma_y$ & 5 & Prevents merging of adjacent lines \\
+Blob threshold & $T_{\text{blob}}$ & 50 & Converts smeared image to solid blobs \\
+Padding & $p$ & 5 & Prevents clipping ascenders/descenders \\
+Min width ratio & --- & 10\% & Rejects narrow noise fragments \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The critical insight from Barakat et al.~\cite{barakat2020} is that the ratio $\sigma_x / \sigma_y$ must be large enough to ensure complete horizontal bridging while keeping vertical bleeding near zero. However, the optimal absolute values of $\sigma_x$ and $\sigma_y$ depend entirely on the physical dimensions of the text in a specific document---a challenge we address with the frequency-domain tuning loop described next.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}lp{10cm}@{}}
+\textit{Library} & OpenCV (\texttt{cv2}) \\
+\textit{API Calls} & \texttt{cv2.GaussianBlur(binary, (x\_stretch|1, y\_stretch|1), 0)} for anisotropic smearing; \texttt{cv2.threshold()} for blob creation; \texttt{cv2.findContours()} for contour extraction \\
+\textit{Class} & \texttt{AnisotropicGaussianSegmenter} (extends \texttt{SegmentationEngine}) \\
+\textit{Method} & \texttt{segment(image\_path, x\_stretch, y\_stretch, ...)} \\
+\textit{Source File} & \texttt{segmentation\_engine.py} \\
+\end{tabular}
+}}
+
+
+% ---- 3.2 ACF Frequency Analysis ----
+\subsection{Autocorrelation-Based Frequency Analysis}
+
+Manually selecting $\sigma_x$ and $\sigma_y$ for every document is impractical. We employ spectral analysis to automatically derive these parameters from the intrinsic spatial periodicity of the document's text lines.
+
+\subsubsection{From Image to Waveform}
+
+A page of text, when viewed as a 1D vertical signal, exhibits a quasi-periodic pattern: dense bands of ink (text lines) alternate with sparse bands of whitespace (inter-line gaps). We capture this pattern by computing the \textbf{Horizontal Projection Profile} (HPP):
+\begin{equation}
+    h(y) = \frac{1}{255} \sum_{x=0}^{W-1} I_{\text{bin}}(x, y)
+    \label{eq:hpp}
+\end{equation}
+where $I_{\text{bin}}$ is the inverted binary image. High values of $h(y)$ correspond to rows dense with ink; near-zero values correspond to inter-line gaps.
+
+\subsubsection{Autocorrelation Function (ACF)}
+
+To extract the dominant spatial period from $h(y)$, we compute the Autocorrelation Function. The ACF measures the similarity of a signal with a time-shifted copy of itself. For our mean-centred HPP signal $\tilde{h}(y) = h(y) - \bar{h}$:
+
+\begin{equation}
+    R(\tau) = \sum_{y=0}^{N-1-\tau} \tilde{h}(y) \cdot \tilde{h}(y + \tau)
+    \label{eq:acf}
+\end{equation}
+
+where $\tau$ is the lag (shift distance in pixels). The ACF always has a maximum at $\tau = 0$ (the signal is perfectly correlated with itself). The \emph{first major peak} at $\tau > 0$ corresponds to the lag distance at which the shifted signal best aligns with the original---this is precisely the \textbf{spatial period} $P$ of the text lines (i.e., the average distance from the start of one line to the start of the next).
+
+We use SciPy's \texttt{find\_peaks} function with a prominence threshold of $5\%$ of the maximum ACF value and a minimum peak distance of 15~pixels to robustly identify this first periodic peak, even in the presence of irregular spacing or marginal noise.
+
+\subsubsection{Why ACF Instead of Raw FFT?}
+
+While a standard Fast Fourier Transform (FFT) can also identify periodic frequencies, it is highly sensitive to phase shifts, baseline drift, and non-uniform spacing---all common in handwritten manuscripts. The ACF is \textbf{phase-invariant}: it measures periodicity regardless of where on the page the pattern begins. This makes it far more robust for archaic documents where the first few lines may be damaged or missing~\cite{ogorman1993}.
+
+\subsubsection{Parameter Derivation from the Spatial Period}
+
+Once the spatial period $P$ (in pixels) is determined, the segmenter's parameters are derived using empirically validated heuristic ratios:
+
+\begin{table}[H]
+\centering
+\caption{ACF-Derived Parameter Mapping}
+\label{tab:acf_mapping}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Formula} & \textbf{Rationale} \\
+\midrule
+$\sigma_y$ & $\max(3, \lfloor P/6 \rfloor)$ & Small fraction of period prevents vertical bleeding \\
+$\sigma_x$ & $\max(21, \lfloor 1.5 \cdot P \rfloor)$ & $1.5\times$ period bridges inter-word gaps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both values are forced to be odd (as required by OpenCV's Gaussian kernel), and $\sigma_x$ is guaranteed to be at least $21$ to ensure meaningful horizontal connectivity.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{0.97\textwidth}{
+\textbf{Implementation Details} \\
+\begin{tabular}{@{}lp{10cm}@{}}
+\textit{Libraries} & NumPy (\texttt{numpy}), SciPy (\texttt{scipy.signal}) \\
+\textit{API Calls} & \texttt{np.correlate(hpp\_centered, hpp\_centered, mode='full')} for autocorrelation; \texttt{scipy.signal.find\_peaks(acf, prominence, distance)} for peak detection \\
+\textit{Class} & \texttt{FFTAnalyzer} (static utility class) \\
+\textit{Method} & \texttt{calculate\_optimal\_parameters(image\_path)} $\rightarrow$ returns \texttt{dict} with $P$, $\sigma_x$, $\sigma_y$ \\
+\textit{Source File} & \texttt{fft\_analyzer.py} \\
+\end{tabular}
+}}
+
+
+% ---- 3.3 Iterative Masking Loop ----
+\subsection{Iterative Masking Loop}
+\label{sec:iterative_loop}
+
+A single pass of ACF analysis on a noisy document may yield suboptimal parameters because marginal artefacts, page borders, and inter-paragraph gaps introduce non-periodic components into the HPP signal. To address this, we implement a \textbf{self-correcting iterative masking loop} that progressively refines the ACF input.
+
+The loop executes $K$ iterations (default $K = 3$):
+
+\begin{enumerate}
+    \item \textbf{Iteration 0}: Run ACF on the full preprocessed image to obtain initial parameters $({\sigma_x}^{(0)}, {\sigma_y}^{(0)})$. Segment the image using these parameters to obtain initial line regions $\{(y_s^{(0)}, y_e^{(0)})\}$.
+
+    \item \textbf{Mask Construction}: Create a new image where all pixels \emph{outside} the detected bounding boxes are erased (set to white). This removes page borders, margin noise, and any non-text artefacts that would corrupt the ACF signal.
+
+    \item \textbf{Iteration $i+1$}: Run ACF on the masked image. Because the input is now cleaner, the ACF identifies a sharper, more accurate spatial period $P^{(i+1)}$, yielding refined parameters $({\sigma_x}^{(i+1)}, {\sigma_y}^{(i+1)})$. Re-segment using these new parameters.
+
+    \item \textbf{Convergence}: After $K$ iterations, the parameters typically stabilise, and the final segmentation is used.
+\end{enumerate}
+
+This iterative refinement is conceptually analogous to Expectation-Maximisation (EM): each iteration uses the current best segmentation to clean the input for a better frequency estimate, which in turn produces a better segmentation. In practice, convergence is achieved within 2--3 iterations.
+
+
+% ============================================================
+% SECTION 4: SOFTWARE ARCHITECTURE AND GUI
+% ============================================================
+\section{Software Architecture and Development GUI}
+
+\textbf{Note:} The graphical interface described in this section is a \emph{development and research tool} built for iterative experimentation during pipeline construction. It is \textbf{not} the final end-user application; the production interface will be developed in a later phase of the project.
+
+% ---- Architecture Diagram ----
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{arch.png}
+    \caption{Interaction between Python modules, classes, and functions across the pipeline. Arrows indicate function calls and data flow.}
+    \label{fig:sw_arch}
+\end{figure}
+
+\subsection{Module Organisation}
+
+The pipeline is organised into three Python source files, each encapsulating a distinct responsibility:
+
+\begin{table}[H]
+\centering
+\caption{Python Module Overview}
+\label{tab:modules}
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{File} & \textbf{Key Class / Function} & \textbf{Responsibility} \\
+\midrule
+\texttt{preprocess.py} & \texttt{preprocess\_image\_array()} & Orchestrates the 5-stage preprocessing pipeline; returns the deskewed binary image and a dictionary of intermediate results. \\
+ & \texttt{PreprocessConfig} & Dataclass holding all tuneable parameters ($d$, $\sigma_r$, $\sigma_s$, $B$, $C$, $A_{\min}$, etc.). \\
+\midrule
+\texttt{segmentation\_engine.py} & \texttt{AnisotropicGaussianSegmenter} & Class implementing the directional Gaussian blob algorithm via the \texttt{segment()} method. \\
+\midrule
+\texttt{fft\_analyzer.py} & \texttt{FFTAnalyzer} & Static class providing \texttt{calculate\_optimal\_parameters()} which returns the ACF-derived $\sigma_x$, $\sigma_y$, and auxiliary parameters. \\
+\midrule
+\texttt{phase1and2.py} & \texttt{EndToEndApp} & Tkinter-based GUI class that orchestrates the full pipeline, manages threading, and renders results. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Key Libraries}
+
+The entire pipeline is built on four core Python libraries:
+
+\begin{itemize}
+    \item \textbf{OpenCV} (\texttt{cv2}, v4.x): All image I/O, colour conversion, filtering, thresholding, morphological operations, contour detection, and affine transformations.
+    \item \textbf{NumPy} (\texttt{numpy}): Array operations, projection profile computation, variance calculation, and autocorrelation via \texttt{np.correlate()}.
+    \item \textbf{SciPy} (\texttt{scipy.signal}): Peak detection in the ACF signal via \texttt{find\_peaks()} and Savitzky--Golay smoothing via \texttt{savgol\_filter()}.
+    \item \textbf{Pillow} (\texttt{PIL}): Bridges OpenCV's NumPy arrays to Tkinter-compatible \texttt{ImageTk.PhotoImage} objects for GUI rendering.
+\end{itemize}
+
+\subsection{GUI Design and Key Features}
+
+The development GUI (\texttt{phase1and2.py}) is a native desktop application built with Python's \texttt{tkinter} and \texttt{ttk} widget libraries. It provides the following capabilities:
+
+\begin{enumerate}
+    \item \textbf{Image Loading}: An ``Open Image'' button launches a native file dialog supporting PNG, JPG, TIFF, and BMP formats. The raw input is immediately displayed in the first slot of the preprocessing grid.
+
+    \item \textbf{One-Click Pipeline Execution}: The ``Run Pipeline'' button triggers the entire preprocessing $\rightarrow$ segmentation workflow in a background \texttt{threading.Thread}, preventing the GUI from freezing during computation.
+
+    \item \textbf{Preprocessing Visualisation}: A tabbed notebook displays all intermediate outputs in a $2 \times 3$ grid:
+    \begin{itemize}
+        \item[1.] RAW Input
+        \item[2.] Grayscale
+        \item[3.] Denoised (Bilateral)
+        \item[4.] Binary (Adaptive Threshold)
+        \item[5.] Cleaned (Speckle Removal)
+        \item[6.] Deskewed Output
+    \end{itemize}
+
+    \item \textbf{Extracted Lines Display}: A second tab presents each segmented text line as an individually cropped image inside a vertically scrollable frame (\texttt{ScrollableFrame} custom widget with mouse-wheel binding).
+
+    \item \textbf{Interactive Parameter Sliders}: Three \texttt{tk.Scale} widgets control $\sigma_x$ (range 11--501), $\sigma_y$ (range 3--101), and padding $p$ (range 0--20). Releasing a slider \emph{automatically re-segments} the document in a background thread and refreshes the Extracted Lines tab in real-time.
+
+    \item \textbf{FFT Auto-Tune Toggle}: A checkbox enables or disables the iterative ACF masking loop. When enabled, the sliders are automatically updated to reflect the mathematically derived optimal values after the loop converges.
+
+    \item \textbf{Thread Safety}: All GUI updates are scheduled on the main thread via \texttt{root.after(0, callback)}, ensuring that background threads never directly modify Tkinter widgets---a requirement for thread-safe GUI operation.
+\end{enumerate}
+
+
+% ============================================================
+% SECTION 5: CONCLUSION
+% ============================================================
+\section{Conclusion}
+
+This report has presented a detailed account of the first two phases of an end-to-end transliteration pipeline for archaic Modi script manuscripts. The preprocessing pipeline, grounded in the methodology of Kausadikar et al.~\cite{kausadikar2025}, was extended with automated speckle removal and HPP variance-based deskewing to eliminate the need for manual Photoshop intervention. The line-level segmentation engine, inspired by the anisotropic Gaussian blob approach of Barakat et al.~\cite{barakat2020}, was augmented with an iterative autocorrelation-driven parameter tuning loop that automatically adapts to the spatial characteristics of each individual document.
+
+Together, these two phases convert a raw, degraded historical scan into a set of clean, individually cropped text line images---the essential input format for the subsequent character-level recognition and transliteration phases of the pipeline.
+
+
+% ============================================================
+% REFERENCES
+% ============================================================
+\begin{thebibliography}{99}
+
+\bibitem{kausadikar2025}
+H.~Kausadikar, T.~Kale, O.~Susladkar, and S.~Mittal,
+``Historic Scripts to Modern Vision: A Novel Dataset and A VLM Framework for Transliteration of Modi Script to Devanagari,''
+\emph{arXiv preprint arXiv:2503.13060v2}, Mar. 2025.
+
+\bibitem{barakat2020}
+B.~K.~Barakat, R.~Cohen, A.~Droby, I.~Rabaev, and J.~El-Sana,
+``Learning-Free Text Line Segmentation for Historical Handwritten Documents,''
+\emph{Applied Sciences}, vol.~10, no.~22, p.~8276, 2020.
+
+\bibitem{tomasi1998}
+C.~Tomasi and R.~Manduchi,
+``Bilateral Filtering for Gray and Color Images,''
+in \emph{Proceedings of the IEEE International Conference on Computer Vision (ICCV)}, pp.~839--846, 1998.
+
+\bibitem{postl1986}
+W.~Postl,
+``Detection of Linear Oblique Structures and Skew Scan in Digitized Documents,''
+in \emph{Proceedings of the 8th International Conference on Pattern Recognition}, pp.~687--689, 1986.
+
+\bibitem{baird1987}
+H.~S.~Baird,
+``The Skew Angle of Printed Documents,''
+in \emph{Proceedings of the SPSE Symposium on Hybrid Imaging Systems}, pp.~21--24, 1987.
+
+\bibitem{ogorman1993}
+L.~O'Gorman,
+``The Document Spectrum for Page Layout Analysis,''
+\emph{IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol.~15, no.~11, pp.~1162--1173, 1993.
+
+\bibitem{rabaev2026}
+I.~Rabaev and M.~Litvak,
+``Recent Advances in Text Line Segmentation and Baseline Detection in Historical Document Images: A Systematic Review,''
+\emph{International Journal on Document Analysis and Recognition (IJDAR)}, vol.~29, pp.~3--39, 2026.
+
+\end{thebibliography}
+
+\end{document}

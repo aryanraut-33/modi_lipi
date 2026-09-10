@@ -1,0 +1,90 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\title{Unsupervised and Image Processing-Based Techniques for \\ Text Line Segmentation in Historical Documents}
+\author{Extracted from: \textit{Recent advances in text line segmentation and baseline detection} \\ \textit{in historical document images: a systematic review (2025)}}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Overview}
+This document summarizes the state-of-the-art unsupervised (training-free) and classical image processing techniques used for text line extraction and baseline detection in historical manuscripts, as identified in recent literature (2019--2024).
+
+\section*{Methodologies}
+
+\begin{enumerate}[label=\textbf{\arabic*.}]
+    
+    \item \textbf{Graph-based Heuristic, Skeleton Pruning \& Distance Transform}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Kassis and El-Sana (2019)
+        \item \textbf{Datasets Applied:} DIVA-HisDB
+        \item \textbf{Description \& Notes:} This approach builds an interpretable graph representation of the text using skeletonization (thinning) and distance transforms. It requires absolutely no model training. According to the review, this purely mathematical heuristic outperformed most deep-learning competing systems on the DIVA-HisDB dataset.
+    \end{itemize}
+
+    \item \textbf{Edge Detection + Baseline Construction via Edge Connectivity}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Li et al. (2019)
+        \item \textbf{Datasets Applied:} Tibetan historical documents
+        \item \textbf{Description \& Notes:} Utilizes classical edge detection algorithms (like Canny) to find the sharp boundaries of ink strokes. By analyzing the horizontal connectivity of these edges, the algorithm constructs continuous baselines. Proven to be highly effective for specific scripts like Tibetan.
+    \end{itemize}
+
+    \item \textbf{Multi-oriented Gaussian-based Method}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Barakat et al. (2019)
+        \item \textbf{Datasets Applied:} VML-MOC
+        \item \textbf{Description \& Notes:} Uses Gaussian filters to blur text into structural blobs. It was specifically designed to handle curved, multi-oriented marginal annotations (which traditional HPP fails at). It showed a significantly improved Intersection over Union (IoU) compared to older single-oriented Gaussian approaches.
+    \end{itemize}
+
+    \item \textbf{Bidimensional Empirical Mode Decomposition (BEMD)}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Dyla and Morain-Nicolier (2019)
+        \item \textbf{Datasets Applied:} Not specified
+        \item \textbf{Description \& Notes:} A signal-processing technique that decomposes an image into its intrinsic mode functions. It provides excellent noise robustness, improving both the binarization and the final line segmentation simultaneously. Noted as being superior to standard iterative methods.
+    \end{itemize}
+
+    \item \textbf{Blob Line Detection + Energy Minimization using Anisotropic Gaussian Filters}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Barakat et al. (2020)
+        \item \textbf{Datasets Applied:} Diva-HisDB, READ-BAD
+        \item \textbf{Description \& Notes:} Uses anisotropic (directional) Gaussian filters to merge adjacent characters into continuous ``blob lines.'' It applies energy minimization to draw precise boundaries. It handles heterogeneous text heights and touching characters incredibly well, automatically adapting to varying character sizes across the document.
+    \end{itemize}
+
+    \item \textbf{Text Line Slicing based on Elongation Analysis}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Sathik and Ratheash (2021)
+        \item \textbf{Datasets Applied:} Tamil palm leaf manuscripts
+        \item \textbf{Description \& Notes:} A heuristic method based on analyzing the physical elongation of text strokes. Designed specifically for scripts written on palm leaves (which have unique warping and noise proﬁles). It proved highly successful at segmenting overlapping lines in very challenging physical mediums.
+    \end{itemize}
+
+    \item \textbf{Seam Carving with Novel Cost Functions}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Nguyen et al. (2022)
+        \item \textbf{Datasets Applied:} DIVA-HisDB, ChamDoc
+        \item \textbf{Description \& Notes:} Employs A* Path Planning (Seam Carving) to find the lowest-energy path horizontally across the image (snaking between text lines). By introducing novel cost functions, it achieved extremely high accuracy and efficient line splitting, outperforming baseline A* path planning by a large margin on the ChamDoc dataset.
+    \end{itemize}
+
+    \item \textbf{Statistical Gap Analysis-based Segmentation}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Mukherjee et al. (2022)
+        \item \textbf{Datasets Applied:} ISIDDI, IAM-Hist, IAM
+        \item \textbf{Description \& Notes:} A completely unsupervised, statistical method that treats segmentation as a two-class classification problem without needing labeled data. It calculates the statistical distribution of gap sizes (between lines and words) to automatically find the perfect splitting parameters. It outperformed the winner of the ICDAR-2013 handwriting segmentation contest.
+    \end{itemize}
+    
+    \item \textbf{Unsupervised Feature Learning: Global Pattern Differentiation}
+    \begin{itemize}
+        \item \textbf{Authors / Year:} Droby et al. (2022)
+        \item \textbf{Datasets Applied:} VML-AHTE
+        \item \textbf{Description \& Notes:} While it uses feature learning, it is entirely unsupervised. It mimics human visual perception by clustering patches of text into global coarse patterns (blob lines). These blob lines then act as a guide for a subsequent Seam Carving algorithm that finds the exact baseline in a color image, followed by energy minimization on the binary image.
+    \end{itemize}
+
+\end{enumerate}
+
+\end{document}

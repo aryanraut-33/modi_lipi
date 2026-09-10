@@ -1,0 +1,25 @@
+pipeline:
+  # Size that patches are resized to before feeding to the neural network
+  target_size: 256
+  
+  # How much the patches should overlap during extraction (25%)
+  overlap_ratio: 0.25
+  
+  # Scaling factor: expected number of text lines visible in an optimal patch
+  zeta: 3.0
+  
+  # Minimum confidence score for the network to keep a predicted scribble
+  prob_threshold: 0.9
+  
+  # Distance in pixels to merge two scribbles vertically
+  distance_threshold: 20.0
+  
+  # Slope similarity to merge two scribbles 
+  slope_threshold: 0.2
+
+model:
+  # Embedding dimension used universally across ViT and Transformers
+  embed_dim: 256
+  
+  # ViT internal fixed patch size
+  patch_size: 16

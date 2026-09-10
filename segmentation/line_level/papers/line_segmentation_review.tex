@@ -1,0 +1,691 @@
+\documentclass[11pt, a4paper]{article}
+
+% ─── Packages ────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}                     % Times-style serif font
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{float}
+
+% ─── Formatting ──────────────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=blue!60!black,
+    urlcolor=blue!70!black
+}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{1em}
+
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{\thesubsubsection}{0.5em}{}
+
+% ═════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ─── Title Block ─────────────────────────────────────────────────────────
+\begin{center}
+    {\LARGE\bfseries Non-Linear Text Line Segmentation for Historical\\[3pt]
+     Handwritten Documents: A Literature Review with\\[3pt]
+     Implications for Modi Script Decipherment}\\[14pt]
+    {\large Pipeline Stage~II --- Line-Level Segmentation}\\[10pt]
+    {\normalsize April 2026}
+\end{center}
+
+\vspace{0.5cm}
+
+% ─── Abstract ────────────────────────────────────────────────────────────
+\begin{abstract}
+\noindent
+Text line segmentation constitutes a foundational stage in any document analysis pipeline, serving as the bridge between image-level preprocessing and character- or word-level recognition. For historical manuscripts---particularly those written in Indic scripts such as Modi---this task is especially challenging due to the presence of overlapping ascenders and descenders, non-uniform inter-line spacing, skewed or curved text lines, and the critical \textit{kana--matra} (headline/\textit{shirorekha}) that must be preserved intact during segmentation. This review surveys six recent approaches to text line segmentation: instance segmentation via Mask-RCNN, the transformer-based LineTR framework, Faster R-CNN adapted for Devanagari manuscripts, and three generative adversarial network (GAN) based methods. For each approach, we present the core segmentation methodology---deliberately excluding preprocessing aspects that have already been addressed in our pipeline---and evaluate its suitability for non-linear segmentation of Modi script documents. We conclude with a discussion of how the most promising techniques can be integrated into our existing preprocessing pipeline, with particular emphasis on preserving the structural integrity of the \textit{kana--matra} as the primary boundary marker for line separation.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+\label{sec:intro}
+
+Text line segmentation (TLS) is the process of partitioning a document image into individual lines of text, each of which can subsequently be processed for character or word recognition. In printed documents, where lines are uniformly spaced and horizontally aligned, projection-profile methods trivially solve this problem. However, historical handwritten manuscripts introduce a constellation of challenges that render such simple approaches inadequate:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Non-linear text flow}: Lines of text in handwritten manuscripts are rarely straight. Writers introduce natural curvature, and physical degradation of the writing surface can warp originally straight lines.
+    \item \textbf{Overlapping ascenders and descenders}: Characters with tall ascenders (e.g., the vertical strokes in Devanagari and Modi) or deep descenders frequently intrude into the vertical space of adjacent lines.
+    \item \textbf{Variable inter-line spacing}: Unlike printed documents, handwritten manuscripts exhibit irregular spacing between lines, sometimes within the same page.
+    \item \textbf{Diacritics and matras}: In Indic scripts, diacritical marks, vowel signs (\textit{matras}), and the headline (\textit{shirorekha}/\textit{kana--matra}) are integral parts of characters that extend above or below the main body of text. Incorrect segmentation that severs these elements from their parent line renders subsequent recognition impossible.
+    \item \textbf{Physical degradation}: Ink bleed-through, staining, torn pages, and faded text create noise that further confounds segmentation algorithms.
+\end{itemize}
+
+\subsection{Relevance to Modi Script Decipherment}
+
+Modi script (\textit{M\={o}\d{d}\={i} lipi}), historically used for writing Marathi, presents a particularly demanding test case for line segmentation. Modi characters feature prominent vertical strokes that frequently extend into adjacent lines, a continuous headline (\textit{kana--matra}) that links characters within a word, and extensive use of ligatures and conjunct consonants. The \textit{kana--matra} is of paramount importance: it serves not only as a calligraphic feature but as a structural boundary that defines word groupings within a line. Any segmentation algorithm applied to Modi manuscripts must therefore:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item Follow \textbf{non-linear boundaries} that curve around descending strokes from the line above.
+    \item Preserve the \textbf{\textit{kana--matra} intact}---using it as the primary reference for defining line boundaries.
+    \item Avoid cutting through characters whose vertical extent overlaps with adjacent lines, instead assigning each character to its correct line based on where its \textit{kana--matra} connects.
+\end{enumerate}
+
+This review examines six recent approaches that address various aspects of these challenges, with the goal of identifying the most suitable technique---or combination of techniques---for integration into our Modi script transliteration pipeline.
+
+\subsection{Scope and Organization}
+
+Since image preprocessing (grayscale conversion, bilateral filtering, adaptive thresholding, deskewing, and speckle removal) has already been completed as Stage~I of our pipeline, this review focuses exclusively on the \textbf{segmentation methodology} of each surveyed paper, deliberately omitting their respective preprocessing pipelines. The remainder of this document is organized as follows: Sections~\ref{sec:mask_rcnn}--\ref{sec:gan_challenging} provide detailed summaries of each approach; Section~\ref{sec:comparative} presents a comparative analysis; Section~\ref{sec:kana_matra} discusses the \textit{kana--matra} preservation constraint; and Section~\ref{sec:integration} outlines the integration strategy for our pipeline.
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Instance Segmentation: Mask-RCNN vs.\ U-Net Networks}
+\label{sec:mask_rcnn}
+
+\noindent\textit{Fizaine et al.\ (2024), ``Historical Text Line Segmentation Using Deep Learning Algorithms: Mask-RCNN against U-Net Networks,'' Journal of Imaging.}
+
+\subsection{Core Segmentation Approach}
+
+This study presents a principled comparison between two fundamentally different paradigms for text line segmentation in historical documents:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Semantic segmentation (U-Net family)}: Networks such as ARU-Net, dhSegment, and Doc-UFCN treat text line segmentation as a pixel-classification problem. Each pixel is assigned a class label (e.g., ``text line'' vs.\ ``background''), and a post-processing step is required to separate distinct line instances that might share the same class label. Post-processing typically involves thresholding, morphological operations, connected component analysis, and shape vectorization.
+    
+    \item \textbf{Instance segmentation (Mask-RCNN)}: Built upon Faster-RCNN, Mask-RCNN simultaneously detects objects (text lines), classifies them, and generates a binary mask for each detected instance. The architecture comprises a Feature Pyramid Network (FPN) backbone, a Region Proposal Network (RPN), and a mask prediction head. Critically, Mask-RCNN produces \textit{independent outputs for each detected object}, enabling it to naturally handle overlapping masks without additional post-processing.
+\end{enumerate}
+
+\subsection{Handling Overlapping Lines}
+
+The key advantage of Mask-RCNN for historical document segmentation lies in its capacity to handle overlapping text lines. Since each detected text line receives its own independent mask, the model can assign overlapping pixels to multiple lines if necessary. In contrast, U-Net-based approaches produce a single label per pixel, causing adjacent or overlapping lines to merge---a common failure mode in densely written manuscripts.
+
+The authors introduced a \textbf{Light Mask Processing (LMP)} algorithm to refine evaluation: the image is binarized using Otsu's method, multiplied by the generated mask, subjected to morphological closure, and then intersected with the original mask. This produces masks that closely follow the actual text foreground, eliminating spurious background pixels.
+
+\subsection{Key Results}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item On object-level metrics (AP@0.5, AP@0.75, AP@[0.5,0.95]), Mask-RCNN \textbf{consistently outperformed} all U-Net variants across three databases (cBaD 2017 READ-Complex, DIVA-HisDB, HOME-Alcar).
+    \item On the private DRoSB dataset with LMP: Mask-RCNN achieved AP@[0.5,0.95] = \textbf{0.78}, compared to 0.50 for Doc-UFCN.
+    \item In end-to-end HTR evaluation, Mask-RCNN segmentation yielded a Character Error Rate (CER) of only \textbf{4.2\%}, versus \textbf{13.1\%} for Doc-UFCN.
+    \item Anchor configuration: scales $[0.25, 0.5, 1.0]$ and aspect ratios $[1.0, 2.0, 4.0, 8.0]$ were optimized for horizontal text lines.
+\end{itemize}
+
+\subsection{Applicability to Modi Script}
+
+Mask-RCNN's instance segmentation paradigm is directly relevant to Modi script, where overlapping strokes between adjacent lines are commonplace. The polygon-based masks generated by Mask-RCNN can, in principle, follow non-linear boundaries. However, the approach generates bounding-box-based region proposals before mask prediction, which may struggle with highly curved Modi text lines. Furthermore, the anchor ratios would need to be specifically tuned for Modi's characteristic stroke patterns and the \textit{kana--matra} structure.
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{LineTR: Unified Transformer-Based Segmentation}
+\label{sec:linetr}
+
+\noindent\textit{Agrawal et al., ``LineTR: Unified Text Line Segmentation for Challenging Palm Leaf Manuscripts,'' Centre for Visual Information Technology, IIIT Hyderabad.}
+
+\subsection{Core Segmentation Approach}
+
+LineTR introduces a two-stage, dataset-agnostic approach for text line segmentation in challenging historical manuscripts, particularly palm leaf documents with diverse scripts (Hindi, Telugu, Tamil, Sundanese, Balinese, Khmer, Malayalam, Javanese). The approach is distinguished by three key innovations:
+
+\subsubsection{Stage 1: Patch-Level Prediction}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Context-Adaptive Patching}: Rather than using fixed-size patches (as in SeamFormer's $256\times256$), LineTR dynamically determines the optimal patch size by sampling candidate patches of various sizes ($m = \{64, 128, \ldots, 512\}$), estimating inter-line gaps from initial predictions, and computing an adapted patch size $t = \zeta \cdot \bar{\delta}$, where $\bar{\delta}$ is the estimated average inter-line gap and $\zeta$ controls the expected number of lines per patch.
+    
+    \item \textbf{Line-Parameter Generator}: A novel DETR-style network that predicts parametric representations of text strike-through lines (``scribbles''). Each scribble is represented by three parameters: midpoint coordinates $(\mu_x, \mu_y)$ and slope $m$. This parametric representation is fundamentally superior to pixel-based scribble prediction (as in SeamFormer), which suffers from merging of adjacent blobs (see Fig.~2 in the original paper). The network uses $N = 200$ learnable ``Line Queries'' processed through a transformer decoder with $L = 8$ layers.
+    
+    \item \textbf{Text-Energy Map Generator}: A hybrid CNN-transformer architecture that produces a continuous binary energy map $B \in [0, 1]$. The CNN encoder extracts feature map $P$, which is combined with the ViT backbone features $M$ via cross-attention, and decoded to the target map through a CNN decoder with skip connections.
+\end{itemize}
+
+\subsubsection{Stage 2: Seam Generation}
+
+The global scribble map $S$ and energy map $B$ from Stage~1 are processed by an enhanced seam generation algorithm to produce tight-fitting polygons. Two crucial modifications are introduced relative to SeamFormer: (i) the binary map is used unthresholded (retaining floating-point values in $[0, 1]$) to preserve text-presence information, and (ii) auxiliary energy maps (smoothing, diacritic, Sobel) are discarded, as the Text-Energy Map alone proves sufficient.
+
+\subsection{Optimization}
+
+The Line-Parameter Generator uses a geometry-based loss:
+\begin{equation}
+    \mathcal{L}_{\text{geom}}(\hat{l}, l) = d_{\text{left}}^2 + d_{\text{right}}^2
+\end{equation}
+where $d_{\text{left}}, d_{\text{right}}$ are vertical distances between predicted and ground-truth lines at the left and right patch boundaries. Hungarian matching ensures optimal one-to-one assignment, and focal loss handles class imbalance in line probability predictions.
+
+\subsection{Key Results}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item LineTR achieved the best IoU and Average Hausdorff Distance (AvgHD) across all benchmark datasets (Indiscapes2, Sundanese, Balinese, Khmer, KGathaM) with a \textbf{single unified model}.
+    \item AvgHD of \textbf{1.86} on Indiscapes2 vs.\ 11.82 for SeamFormer and 15.81 for Palmira.
+    \item Excellent zero-shot performance on three unseen datasets (Wikimedia: AvgHD = 0.94, Upamiti: 1.01, SVMP: 3.04).
+    \item Context-adaptive patching is critical: training with fixed-size patches on the combined dataset caused optimization to \textbf{not converge}.
+\end{itemize}
+
+\subsection{Applicability to Modi Script}
+
+LineTR is arguably the most promising approach for Modi script segmentation:
+\begin{itemize}[leftmargin=1.5em]
+    \item Its parametric scribble representation naturally handles the curvature of Modi text lines.
+    \item The seam generation framework produces non-linear, tight-fitting polygons that can follow the contour of the \textit{kana--matra}.
+    \item Demonstrated effectiveness on Indic manuscripts (Hindi, Telugu, Malayalam) with diacritics similar to those in Modi.
+    \item Zero-shot generalization suggests the model could perform well on unseen Modi manuscripts with minimal fine-tuning.
+    \item The text-energy map's diacritic awareness is critical for preserving matras.
+\end{itemize}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Faster R-CNN for Indian Ancient Documents}
+\label{sec:faster_rcnn}
+
+\noindent\textit{Jindal and Ghosh (2023), ``Text Line Segmentation in Indian Ancient Handwritten Documents Using Faster R-CNN,'' Multimedia Tools and Applications.}
+
+\subsection{Core Segmentation Approach}
+
+This study proposes a modified Faster R-CNN architecture specifically designed for text line segmentation in ancient Devanagari handwritten documents---the closest script relative to Modi. The architecture comprises four components:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Backbone (ResNet50)}: Generates a $25 \times 25 \times 2048$ feature matrix from the input document image. The authors chose ResNet50 over VGG-16 (the conventional Faster R-CNN backbone) based on superior performance and faster convergence due to residual connections.
+    
+    \item \textbf{Region Proposal Network (RPN)}: A sliding window over the feature matrix generates region proposals (anchor boxes). The key modification is the use of \textbf{15 anchor boxes} (3 scales $\times$ 5 aspect ratios), compared to the conventional 9 (3 $\times$ 3). The expanded aspect ratios accommodate the horizontal elongation typical of text lines. Anchor sizes range from $32\times32$ to $1024\times512$.
+    
+    \item \textbf{ROI Pooling}: Selects 1,000 proposals from the RPN output and normalizes each to $7\times7\times256$ dimensions. The number of proposals was determined via Bayesian optimization.
+    
+    \item \textbf{Detection Network}: Two fully connected layers followed by a softmax classifier (textline present/absent) and a bounding box regressor outputting four coordinates.
+\end{enumerate}
+
+\subsection{Training Configuration}
+
+IoU threshold for positive anchors was set to \textbf{0.88} (determined via Bayesian optimization), learning rate 0.025, gamma 0.05. The total loss combines classification loss and regression loss, back-propagated end-to-end.
+
+\subsection{Key Results}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item Achieved F-measure of \textbf{99.98\%} on a self-generated dataset of 19,889 ancient Devanagari document images across eight manuscript categories (Ayurveda, Religious, Astrological, Tantra, Vastu, Vedic literature, Ved-vedant, Political history).
+    \item Outperformed all baselines: Mask R-CNN (98.31\%), Spiking YOLO (96.54\%), YOLOv3 (96.43\%), ARU-Net (97\%), conventional Faster R-CNN (78.12\%).
+    \item Successfully handled dark spots, faded text, skewed lines, and interline overlapping.
+    \item Optimal batch size: 2; optimal epochs: 50.
+\end{itemize}
+
+\subsection{Limitations and Applicability to Modi Script}
+
+While the reported results are impressive, several caveats must be noted:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item The method produces \textbf{rectangular bounding boxes}, not non-linear polygons. For Modi script, where text from one line can curve into the space of another, rectangular boxes will inevitably include portions of adjacent lines.
+    \item The extremely high F-measure (99.98\%) on a self-generated, non-public dataset warrants caution---the generalizability to unseen Modi documents is uncertain.
+    \item The direct relevance to \textbf{Devanagari script}, however, is highly valuable. Devanagari and Modi share the \textit{shirorekha} feature and similar character morphology, suggesting that a model trained on Devanagari documents could serve as a strong initialization for Modi segmentation after appropriate fine-tuning.
+    \item The 15-anchor-box scheme with expanded aspect ratios could be adopted for Modi, possibly with further aspect ratio adjustments to accommodate Modi's specific stroke patterns.
+\end{itemize}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{GAN-Based Text-Line Extraction via Image-to-Image Translation}
+\label{sec:gan_extraction}
+
+\noindent\textit{Kundu et al.\ (2020), ``Text-line Extraction from Handwritten Document Images Using GAN,'' Expert Systems With Applications.}
+
+\subsection{Core Segmentation Approach}
+
+This work pioneers the use of Generative Adversarial Networks for text line extraction, formulating TLS as an \textbf{image-to-image translation} task. Given an input document image, the model generates an output image with red separator lines delineating individual text lines.
+
+\subsubsection{Generator Architecture}
+
+Two generator architectures are explored:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Encoder-Decoder}: Standard convolutional encoding to a $1\times1\times512$ bottleneck, followed by deconvolutional decoding. Without skip connections, this architecture fails to preserve spatial detail, producing generic straight-line patterns regardless of input content.
+    
+    \item \textbf{U-Net}: The encoder-decoder with skip connections between corresponding layers. These connections enable the flow of fine-grained spatial information past the bottleneck, allowing the network to produce separator lines that faithfully follow the text structure. The U-Net generator is decisively superior.
+\end{itemize}
+
+\subsubsection{Discriminator Architecture}
+
+A PatchGAN discriminator with 5 convolutional layers takes the concatenation of input and generated images, producing a $30\times30\times1$ score map where each entry classifies its receptive field as ``real'' or ``fake.'' This patch-level discrimination ensures high-resolution, spatially consistent output.
+
+\subsubsection{Loss Function}
+
+The optimal loss is a combination of three terms:
+\begin{equation}
+    G^* = \arg\min_G \max_D \left[\lambda_{\text{gan}} \cdot \mathcal{L}_{\text{cGAN}}(G,D) + \lambda_l \cdot \left(\mathcal{L}_{L_1}(G) + \mathcal{L}_{L_2}(G)\right)\right]
+\end{equation}
+where the cGAN loss drives adversarial training, $L_1$ loss prevents mode collapse and ensures faithfulness to ground truth, and $L_2$ loss smooths the output. The optimal ratio between GAN and normalization losses is $1:100$.
+
+\subsection{Key Results}
+
+\begin{table}[H]
+\centering
+\caption{Performance comparison on benchmark datasets (U-Net architecture, cGAN+L1+L2 loss).}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Dataset} & \textbf{DR (\%)} & \textbf{RA (\%)} & \textbf{ER (\%)} & \textbf{FM (\%)} \\
+\midrule
+HIT-MW       & 99.59 & 99.69 & 0.31 & 99.63 \\
+ICDAR 2013   & 98.77 & 99.05 & 0.95 & 98.91 \\
+\bottomrule
+\end{tabular}
+\label{tab:gan_results_kundu}
+\end{table}
+
+The combination of all three losses (cGAN + L1 + L2) outperformed all prior methods on HIT-MW and achieved state-of-the-art results on ICDAR 2013.
+
+\subsection{Applicability to Modi Script}
+
+The image-to-image translation formulation is conceptually elegant for Modi script segmentation:
+\begin{itemize}[leftmargin=1.5em]
+    \item The separator lines generated by the GAN can, in principle, follow non-linear paths between text lines, naturally accommodating the curvature introduced by overlapping Modi strokes.
+    \item However, the method requires paired training data (input document + ground truth with separator lines), and generating this ground truth for Modi manuscripts would require expert manual annotation.
+    \item The approach does not explicitly model the \textit{kana--matra} structure, meaning that separator lines might inadvertently cut through the headline of a word if the training data does not adequately represent this constraint.
+\end{itemize}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Hybrid Deep Learning and Traditional Techniques: Application to Cham Manuscripts}
+\label{sec:cham}
+
+\noindent\textit{Nguyen et al.\ (2025), ``Text Line Segmentation Approach Combining Deep Learning Model and Traditional Image Processing Techniques---Application to Transliteration of Cham Manuscripts,'' Multimedia Tools and Applications.}
+
+\subsection{Core Segmentation Approach}
+
+This study proposes a hybrid pipeline that combines a fine-tuned deep learning model with traditional image processing techniques, specifically targeting the transliteration of Cham manuscripts---a script with ascenders, descenders, and diacritics similar in complexity to Modi. The pipeline comprises two main stages:
+
+\subsubsection{Baseline Extraction Step}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Fine-tuned docExtractor}: A U-Net architecture with ResNet-18 backbone, originally trained on the IlluHisDoc dataset, is fine-tuned on 125 Cham manuscript images. The final layer is modified from 4 classes to 2 (background, text-line).
+    
+    \item \textbf{Post-processing --- Merging}: Disconnected components that belong to the same text line are merged based on two conditions: (i) the average height difference between components is less than threshold $T_{cch}$, and (ii) the angle difference is less than $T_{cca}$. If conditions are not met, a polynomial fit is used to assess linearity.
+    
+    \item \textbf{Post-processing --- Splitting}: Oversized connected components (height $> T_{\text{height}}$) that fail a linearity test (mean squared error of polynomial fit $> T_{\text{err}}$) are split into separate lines.
+\end{itemize}
+
+\subsubsection{Segmentation Refinement Step}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Seam Carving}: An energy map is constructed from the baseline extraction image. For each candidate line $CL_i$, dynamic lower and upper boundaries are computed based on distances to adjacent lines and average character height. Forward-backward seam carving then finds the minimum-energy path between these boundaries. The seam carving cost function uses:
+    \begin{equation}
+        M_{y,x+1} = E_{y,x+1} + \min(M_{y-1:y+1, x-1})
+    \end{equation}
+    
+    \item \textbf{Minimum Spanning Tree (MST)}: Applied on a binarized version of the image (using a pre-trained Selectional Auto-Encoder [SAE]), MST connects relevant text components within each segmented region, refining boundaries through graph-based optimization followed by dilation.
+\end{itemize}
+
+\subsection{Key Results}
+
+\begin{table}[H]
+\centering
+\caption{Comparison of methods on Cham manuscripts dataset (627 images, $\sim$8300 text lines).}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Method} & \textbf{IoU} & \textbf{Prec.} & \textbf{Recall} & \textbf{F1} & \textbf{AP@.5} & \textbf{AP@.75} \\
+\midrule
+doc-UFCN             & 0.211 & 0.619 & 0.242 & 0.325 & 0.06 & 0    \\
+Transkribus           & 0.295 & 0.930 & 0.299 & 0.444 & 0.05 & 0    \\
+docExtractor          & 0.426 & 0.977 & 0.431 & 0.590 & 0.151 & 0   \\
+eScriptorium          & 0.531 & 0.882 & 0.565 & 0.648 & 0.649 & 0.192 \\
+LayoutParser          & 0.626 & 0.722 & 0.837 & 0.751 & 0.849 & 0.230 \\
+\textbf{Proposed}     & \textbf{0.646} & \textbf{0.905} & 0.685 & \textbf{0.765} & 0.844 & \textbf{0.316} \\
+\bottomrule
+\end{tabular}
+\label{tab:cham_results}
+\end{table}
+
+Crucially, this study also evaluates segmentation quality through \textbf{transliteration metrics}:
+\begin{itemize}[leftmargin=1.5em]
+    \item Proposed method with MST: WER = \textbf{38.16\%}, CER = \textbf{21.73\%}
+    \item Manual segmentation: WER = 23.42\%, CER = 10.82\%
+    \item The gap between automated and manual segmentation ($\sim$15\% WER, $\sim$11\% CER) underscores the importance of precise line segmentation for downstream text recognition.
+\end{itemize}
+
+\subsection{Applicability to Modi Script}
+
+This hybrid approach offers several advantages for Modi script:
+\begin{itemize}[leftmargin=1.5em]
+    \item The \textbf{seam carving} technique is inherently non-linear, making it ideal for following the curved boundaries between Modi text lines where descenders from one line intrude into the space of the next.
+    \item The \textbf{MST refinement} can capture disconnected components (common in degraded Modi manuscripts) and correctly assign them to their parent lines.
+    \item The \textbf{transliteration-aware evaluation} methodology is directly transferable to our Modi-to-Devanagari transliteration pipeline.
+    \item The hyperparameter structure (height thresholds, angle thresholds, kernel sizes) can be adapted to Modi's specific character dimensions and inter-line spacing patterns.
+    \item The approach of combining a fine-tuned baseline extractor with script-specific post-processing matches our pipeline philosophy.
+\end{itemize}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{GAN-Based Segmentation for Challenging Handwritten Documents}
+\label{sec:gan_challenging}
+
+\noindent\textit{\"Oz\c{s}eker et al.\ (2025), ``GAN-Based Text Line Segmentation Method for Challenging Handwritten Documents,'' International Journal on Document Analysis and Recognition (IJDAR).}
+
+\subsection{Core Segmentation Approach}
+
+Building upon the earlier GAN-based TLE work (Section~\ref{sec:gan_extraction}), this study focuses specifically on generating \textbf{text line masks} (rather than separator lines) using a pix2pix-inspired architecture, targeting two particularly challenging datasets:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{VML-AHTE}: Arabic manuscripts with heavy diacritics, touching and overlapping characters.
+    \item \textbf{VML-MOC}: Multiply oriented and curved text lines with footnotes and marginal notes added over centuries.
+\end{itemize}
+
+\subsubsection{Architecture}
+
+The generator is a U-Net with encoder and decoder depth of 8, using $3\times3$ convolutions, batch normalization, leaky ReLU ($\alpha=0.2$), and 50\% dropout. The discriminator is PatchGAN with depth 4. Input patches are $512\times512$.
+
+\subsubsection{Sliding Window Inference}
+
+A key contribution is the sliding window approach for reassembling page-level predictions from patch-level outputs. A $512\times512$ window slides across the test image with step size 300, and only the central $300\times300$ region of each prediction is retained. This eliminates boundary artifacts that arise from direct concatenation of patches.
+
+\subsubsection{Loss Analysis}
+
+Three loss configurations were evaluated:
+\begin{itemize}[leftmargin=1.5em]
+    \item GAN Loss only: Good Pixel IU but poor DR/RA (struggles with fine-grained line separation)
+    \item L1 Loss: Best DR/RA/FM balance on VML-AHTE
+    \item L2 Loss: Best overall performance on VML-MOC (curved/multi-directional lines)
+\end{itemize}
+
+\subsection{Key Results}
+
+\begin{table}[H]
+\centering
+\caption{Performance comparison on VML-MOC dataset (curved/multi-directional text lines).}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Method} & \textbf{DR} & \textbf{RA} & \textbf{FM} & \textbf{Line IU} & \textbf{Pixel IU} \\
+\midrule
+Barakat et al.\ (Unsup.) & -- & -- & -- & 60.99 & 80.96 \\
+FCN+EM+Aug (Sup.)       & 84.43 & 58.89 & 68.77 & 35.12 & 60.97 \\
+GAN (L1)                & 77.36 & 80.63 & 78.92 & 73.56 & 88.34 \\
+\textbf{GAN (L2)}       & \textbf{79.73} & \textbf{82.94} & \textbf{81.22} & \textbf{72.80} & \textbf{89.30} \\
+\bottomrule
+\end{tabular}
+\label{tab:gan_vml_moc}
+\end{table}
+
+The GAN models achieved the \textbf{best segmentation accuracy on VML-MOC} across all methods, demonstrating their strength in handling curved and multi-directional text lines. On VML-AHTE, they showed competitive performance with the highest Line IU (99.01) achieved by GAN with original GAN Loss.
+
+\subsection{Applicability to Modi Script}
+
+\begin{itemize}[leftmargin=1.5em]
+    \item The mask-generation formulation is well-suited for Modi, where each line's mask should encompass all characters including their \textit{kana--matra} while excluding intrusions from adjacent lines.
+    \item The model's demonstrated ability to handle curved and multi-directional text lines is directly relevant to Modi manuscripts.
+    \item However, the small training dataset requirement (50,000 patches from 40 images) is both an advantage (feasible for the limited Modi corpus) and a concern (potential overfitting).
+    \item The sliding window approach provides a practical solution for processing full-page Modi manuscripts at inference time.
+\end{itemize}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Comparative Analysis}
+\label{sec:comparative}
+
+Table~\ref{tab:comparison} presents a comparative summary of the six surveyed approaches across dimensions critical for Modi script segmentation.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Comparative summary of surveyed text line segmentation approaches.}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{2.3cm} >{\raggedright\arraybackslash}p{2cm} >{\centering\arraybackslash}p{1.4cm} >{\centering\arraybackslash}p{1.5cm} >{\centering\arraybackslash}p{1.5cm} >{\centering\arraybackslash}p{1.5cm} >{\raggedright\arraybackslash}p{2.5cm}}
+\toprule
+\textbf{Approach} & \textbf{Paradigm} & \textbf{Non-linear Boundary} & \textbf{Overlap Handling} & \textbf{Diacritic Awareness} & \textbf{Post-proc. Required} & \textbf{Best Metric} \\
+\midrule
+Mask-RCNN \newline (Fizaine) & Instance Seg. & Partial & \checkmark\checkmark & -- & None & CER 4.2\% \\
+\addlinespace
+LineTR \newline (Agrawal) & Transformer + Seam & \checkmark\checkmark & \checkmark & \checkmark\checkmark & Minimal & IoU 0.80, AvgHD 1.86 \\
+\addlinespace
+Faster R-CNN \newline (Jindal) & Object Det. & $\times$ & \checkmark & -- & None & FM 99.98\% \\
+\addlinespace
+GAN-TLE \newline (Kundu) & Img-to-Img & \checkmark & \checkmark & -- & Minimal & FM 99.63\% \\
+\addlinespace
+Hybrid DL+IP \newline (Nguyen) & Baseline + Seam + MST & \checkmark\checkmark & \checkmark & \checkmark & Extensive & CER 21.73\% \\
+\addlinespace
+GAN-Mask \newline (\"Oz\c{s}eker) & Img-to-Img & \checkmark\checkmark & \checkmark\checkmark & \checkmark & Minimal & Pixel IU 89.30 \\
+\bottomrule
+\end{tabularx}
+\label{tab:comparison}
+\end{table}
+
+\subsection{Key Observations}
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Non-linear boundary generation}: LineTR's seam-based polygon generation and the Cham manuscript hybrid approach offer the most sophisticated non-linear boundary capabilities. GAN-based mask generation (\"Oz\c{s}eker) also produces inherently non-linear masks.
+    
+    \item \textbf{Overlap handling}: Mask-RCNN's independent mask outputs and GAN's mask-based approach handle overlapping lines most naturally, without requiring explicit post-processing.
+    
+    \item \textbf{Diacritic/matra preservation}: LineTR's text-energy map explicitly preserves diacritics; the Cham manuscript approach evaluates this through transliteration metrics. Neither the Faster R-CNN nor the original GAN-TLE approach explicitly addresses diacritics.
+    
+    \item \textbf{Indic script relevance}: The Faster R-CNN approach is specifically designed for Devanagari (closely related to Modi), and LineTR is evaluated on multiple Indic scripts including Hindi, Telugu, and Malayalam.
+    
+    \item \textbf{Scalability}: LineTR's single-model, dataset-agnostic design is the most scalable. GAN-based methods require retraining for new scripts, while the Cham manuscript approach requires script-specific hyperparameter tuning.
+\end{enumerate}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{The \textit{Kana--Matra} Constraint: Boundary Definition for Modi Script}
+\label{sec:kana_matra}
+
+The \textit{kana--matra} (also called \textit{shirorekha} in Devanagari) is the horizontal headline stroke that runs along the top of Modi characters, connecting them into word units. This feature is unique to Brahmic scripts and poses a specific constraint on line segmentation:
+
+\subsection{Why the \textit{Kana--Matra} Must Not Be Cut}
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item \textbf{Structural integrity}: The \textit{kana--matra} is not merely a decorative element; it defines the structural connectivity of characters within a word. Severing it at an incorrect point can split a single character into fragments or merge characters from different words.
+    
+    \item \textbf{Recognition dependency}: Character recognition algorithms for Modi script rely on the \textit{kana--matra} as an anchor for identifying character boundaries. If the headline is cut by an incorrect line segmentation boundary, the recognition stage will produce systematic errors.
+    
+    \item \textbf{Line membership indicator}: The \textit{kana--matra} is the most reliable indicator of which line a character belongs to. Even when a character's descender extends into the space of the line below, the position of its \textit{kana--matra} unambiguously assigns it to the correct line.
+\end{enumerate}
+
+\subsection{Using \textit{Kana--Matra} as the Segmentation Boundary}
+
+We propose using the \textit{kana--matra} as the \textbf{primary cue} for defining line boundaries:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Upper boundary}: The segmentation cut for the top of a line should pass \textit{above} all \textit{kana--matra} strokes belonging to that line, ensuring that the headline is fully included.
+    
+    \item \textbf{Lower boundary}: The segmentation cut for the bottom of a line should pass \textit{below} all descenders belonging to characters whose \textit{kana--matra} is part of this line, even if those descenders extend into the geometric space of the next line.
+    
+    \item \textbf{Conflict resolution}: When a descender from line $n$ overlaps with the \textit{kana--matra} region of line $n+1$, the segmentation boundary must follow a \textbf{non-linear curve} that preserves both the descender (assigned to line $n$) and the headline (assigned to line $n+1$). This is precisely the scenario shown in the attached input image.
+\end{itemize}
+
+\subsection{Algorithmic Implications}
+
+Among the surveyed approaches:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{LineTR}'s seam carving naturally produces non-linear boundaries that can navigate between the descender of one line and the headline of the next, making it the most suitable for this constraint.
+    \item \textbf{The Cham manuscript hybrid approach}'s dynamic seam boundaries (Algorithm~3: defining lower/upper positions based on adjacent line distances and character height) can be adapted to use \textit{kana--matra} positions as anchor points.
+    \item \textbf{Mask-RCNN} can learn to generate masks that include the full \textit{kana--matra}, provided the training data includes polygon annotations that respect this structure.
+    \item \textbf{GAN-based mask generation} can learn the \textit{kana--matra} boundary implicitly if the training masks are annotated to include complete headlines.
+\end{itemize}
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Integration into the Modi Script Pipeline}
+\label{sec:integration}
+
+Having completed Stage~I (preprocessing: grayscale conversion, bilateral filtering, adaptive thresholding, deskewing, and speckle removal), we now outline the integration of line segmentation as Stage~II.
+
+\subsection{Recommended Approach: Hybrid LineTR + Seam Carving}
+
+Based on our analysis, we recommend a two-phase approach inspired by LineTR (Section~\ref{sec:linetr}) and the Cham manuscript hybrid method (Section~\ref{sec:cham}):
+
+\subsubsection{Phase 1: Baseline Detection}
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item Accept the preprocessed (binarized, deskewed) Modi manuscript image from Stage~I.
+    \item Apply context-adaptive patching (LineTR's mechanism) calibrated for Modi's typical inter-line spacing.
+    \item Use a fine-tuned LineTR model (or a U-Net-based baseline extractor fine-tuned on Modi ground truth) to detect text line baselines/scribbles.
+    \item Merge patch-level predictions into global baselines using LineTR's Projection-Merging Algorithm.
+    \item Apply the Cham manuscript's merging and splitting post-processing (Algorithms~1 and~2) to handle disconnected or touching baselines.
+\end{enumerate}
+
+\subsubsection{Phase 2: Non-Linear Boundary Generation}
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item Construct an energy map from the baseline detection output plus the original binarized image.
+    \item For each detected baseline, compute dynamic upper and lower boundary positions using:
+    \begin{itemize}
+        \item The \textit{kana--matra} positions as upper anchor points.
+        \item Adjacent line distances and average character height as lower constraints.
+    \end{itemize}
+    \item Apply seam carving between these boundaries to generate non-linear segmentation paths that:
+    \begin{itemize}
+        \item Follow the contour of the \textit{kana--matra} of the line below (upper cut).
+        \item Curve around descending strokes from the line above (lower cut).
+    \end{itemize}
+    \item Optionally refine segmented regions using MST-based boundary optimization.
+\end{enumerate}
+
+\subsection{Alternative Approach: GAN-Based Mask Generation}
+
+As a complementary or alternative strategy:
+\begin{enumerate}[leftmargin=1.5em]
+    \item Train a pix2pix GAN model on annotated Modi manuscripts where ground truth masks fully encompass each line's \textit{kana--matra} and all associated characters.
+    \item Use the sliding window inference approach (\"Oz\c{s}eker, Section~\ref{sec:gan_challenging}) with $512\times512$ patches and central $300\times300$ extraction.
+    \item The GAN can potentially learn the \textit{kana--matra} constraint implicitly from the training data.
+\end{enumerate}
+
+\subsection{Pipeline Data Flow}
+
+\noindent
+The complete pipeline from preprocessing to line extraction follows this data flow:
+
+\begin{center}
+\begin{small}
+\begin{tabular}{rl}
+\textbf{Stage I} & Raw Modi manuscript image \\
+& $\downarrow$ \\
+& Grayscale $\rightarrow$ Bilateral filter $\rightarrow$ Adaptive threshold $\rightarrow$ Deskew $\rightarrow$ Speckle removal \\
+& $\downarrow$ \\
+\textbf{Stage II} & Preprocessed binary image \\
+& $\downarrow$ \\
+& Context-adaptive patching $\rightarrow$ LineTR baseline detection \\
+& $\downarrow$ \\
+& Baseline merging/splitting post-processing \\
+& $\downarrow$ \\
+& \textit{Kana--matra} detection and boundary anchoring \\
+& $\downarrow$ \\
+& Seam carving with dynamic upper/lower boundaries \\
+& $\downarrow$ \\
+& MST-based boundary refinement \\
+& $\downarrow$ \\
+& Individual segmented text line images \\
+& $\downarrow$ \\
+\textbf{Stage III} & Character/word segmentation and recognition \\
+\end{tabular}
+\end{small}
+\end{center}
+
+\subsection{Training Data Requirements}
+
+To implement the recommended approach for Modi script, the following annotated data is needed:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Baseline annotations}: Strike-through scribbles for each text line (can be semi-automatically generated, as demonstrated by LineTR's annotation pipeline with 75\% time reduction).
+    \item \textbf{Polygon annotations}: Non-linear polygons encompassing each text line, including complete \textit{kana--matra} and all descenders.
+    \item \textbf{Minimum corpus}: LineTR was trained on $\sim$1,300 images; the Cham manuscript approach used only 125 for fine-tuning. A corpus of 100--200 annotated Modi manuscript pages would likely suffice for fine-tuning.
+\end{itemize}
+
+\subsection{Evaluation Strategy}
+
+Following the Cham manuscript study's insight, we recommend evaluating line segmentation quality through \textbf{both} intrinsic segmentation metrics (IoU, AP, F1) and \textbf{extrinsic transliteration metrics} (CER, WER) measured by feeding segmented lines into our downstream Modi-to-Devanagari transliteration model.
+
+
+% ═════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+\label{sec:conclusion}
+
+This review has surveyed six approaches to text line segmentation in historical handwritten documents, with the specific goal of identifying techniques suitable for Modi script decipherment. The analysis reveals that no single approach addresses all challenges simultaneously; rather, the most effective strategy for Modi script combines elements from multiple approaches:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{LineTR's} parametric scribble prediction and context-adaptive patching for robust baseline detection across varied manuscripts.
+    \item \textbf{Seam carving} (from the Cham manuscript approach) for generating non-linear boundaries that respect the \textit{kana--matra} structure.
+    \item \textbf{MST-based refinement} for handling disconnected components in degraded Modi documents.
+    \item \textbf{GAN-based mask generation} as a complementary technique that can implicitly learn script-specific segmentation constraints from annotated training data.
+\end{itemize}
+
+The \textit{kana--matra}---the horizontal headline connecting Modi characters---serves as the fundamental boundary marker for line segmentation. Any segmentation algorithm applied to Modi manuscripts must preserve this structure intact, using it as the primary anchor for determining line membership. The non-linear segmentation boundaries produced by seam carving and GAN-based mask generation are intrinsically capable of respecting this constraint, provided they are trained or configured with appropriate Modi-specific ground truth.
+
+As our pipeline proceeds from the completed preprocessing stage (Stage~I) to line segmentation (Stage~II) and ultimately to character recognition and transliteration (Stage~III), the quality of line segmentation will directly determine the ceiling of downstream recognition accuracy---a relationship quantitatively demonstrated by the 15\% WER gap between automated and manual segmentation in the Cham manuscript study.
+
+
+% ═════════════════════════════════════════════════════════════════════════
+% ─── References ──────────────────────────────────────────────────────────
+\begin{thebibliography}{99}
+
+\bibitem{fizaine2024}
+F.~C.~Fizaine, P.~Bard, M.~Paindavoine, C.~Robin, E.~Bouy\'e, R.~Lef\`evre, and A.~Vinter,
+``Historical text line segmentation using deep learning algorithms: Mask-RCNN against U-Net networks,''
+\textit{Journal of Imaging}, vol.~10, no.~3, p.~65, 2024.
+
+\bibitem{agrawal2024}
+V.~Agrawal, N.~Vadlamudi, M.~Waseem, A.~Joseph, S.~Chitluri, and R.~K.~Sarvadevabhatla,
+``LineTR: Unified text line segmentation for challenging palm leaf manuscripts,''
+Centre for Visual Information Technology, IIIT Hyderabad.
+
+\bibitem{jindal2023}
+A.~Jindal and R.~Ghosh,
+``Text line segmentation in indian ancient handwritten documents using faster R-CNN,''
+\textit{Multimedia Tools and Applications}, vol.~82, pp.~10703--10722, 2023.
+
+\bibitem{kundu2020}
+S.~Kundu, S.~Paul, S.~K.~Bera, A.~Abraham, and R.~Sarkar,
+``Text-line extraction from handwritten document images using GAN,''
+\textit{Expert Systems With Applications}, vol.~140, p.~112916, 2020.
+
+\bibitem{nguyen2025}
+T.~N.~Nguyen, J.~C.~Burie, T.~L.~Le, and A.-V.~Schweyer,
+``Text line segmentation approach combining deep learning model and traditional image processing techniques---application to transliteration of Cham manuscripts,''
+\textit{Multimedia Tools and Applications}, vol.~84, pp.~39143--39169, 2025.
+
+\bibitem{ozseker2025}
+\.{I}.~\"Oz\c{s}eker, A.~A.~Demir, and U.~\"Ozkaya,
+``GAN-based text line segmentation method for challenging handwritten documents,''
+\textit{International Journal on Document Analysis and Recognition (IJDAR)}, vol.~28, pp.~59--69, 2025.
+
+\bibitem{he2017mask}
+K.~He, G.~Gkioxari, P.~Doll\'{a}r, and R.~Girshick,
+``Mask R-CNN,''
+in \textit{Proc.\ IEEE ICCV}, 2017.
+
+\bibitem{ronneberger2015unet}
+O.~Ronneberger, P.~Fischer, and T.~Brox,
+``U-Net: Convolutional networks for biomedical image segmentation,''
+in \textit{MICCAI}, 2015.
+
+\bibitem{ren2015faster}
+S.~Ren, K.~He, R.~Girshick, and J.~Sun,
+``Faster R-CNN: Towards real-time object detection with region proposal networks,''
+in \textit{Advances in Neural Information Processing Systems}, 2015.
+
+\bibitem{carion2020detr}
+N.~Carion, F.~Massa, G.~Synnaeve, N.~Usunier, A.~Kirillov, and S.~Zagoruyko,
+``End-to-end object detection with transformers,''
+in \textit{ECCV}, 2020.
+
+\bibitem{isola2017pix2pix}
+P.~Isola, J.-Y.~Zhu, T.~Zhou, and A.~A.~Efros,
+``Image-to-image translation with conditional adversarial networks,''
+in \textit{Proc.\ IEEE CVPR}, 2017.
+
+\bibitem{goodfellow2014}
+I.~Goodfellow, J.~Pouget-Abadie, M.~Mirza, B.~Xu, D.~Warde-Farley, S.~Ozair, A.~Courville, and Y.~Bengio,
+``Generative adversarial nets,''
+in \textit{Advances in Neural Information Processing Systems}, 2014.
+
+\bibitem{vadlamudi2024}
+N.~Vadlamudi, V.~Agrawal, and R.~K.~Sarvadevabhatla,
+``SeamFormer: High precision text line segmentation for handwritten documents,''
+in \textit{ICDAR}, 2023.
+
+\bibitem{boillet2022}
+M.~Boillet, C.~Kermorvant, and T.~Paquet,
+``Robust text line detection in historical documents: Learning and evaluation methods,''
+\textit{International Journal on Document Analysis and Recognition (IJDAR)}, vol.~25, pp.~95--114, 2022.
+
+\bibitem{gruning2019}
+T.~Gr\"{u}ning, G.~Leifert, T.~Strau\ss{}, J.~Michael, and R.~Labahn,
+``A two-stage method for text line detection in historical documents,''
+\textit{IJDAR}, vol.~22, no.~3, pp.~285--302, 2019.
+
+\end{thebibliography}
+
+\end{document}
